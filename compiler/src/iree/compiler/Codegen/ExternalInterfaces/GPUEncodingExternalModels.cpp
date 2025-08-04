@@ -119,7 +119,7 @@ chooseDataTiledMMAAttr(TypeRange eTypes, TargetAttr target,
   // to set intrinsicsK=4 to turn 4 separate 32-bit loads into one 128-bit load.
   int intrinsicLoadBits =
       std::min(sizeInBits(intrinsicA), sizeInBits(intrinsicB));
-  const int intrinsicsK =
+  int intrinsicsK =
       std::max(1, *wgp.getMaxLoadInstructionBits() / intrinsicLoadBits);
 
   // The total amount of unrolling along the M and N dimensions is normally
@@ -226,7 +226,11 @@ chooseDataTiledMMAAttr(TypeRange eTypes, TargetAttr target,
                  static_cast<int>(llvm::divideCeil(
                      narrowDim.size, getNSize(intrinsicMma.getIntrinsic()))));
   }
-
+  subgroupsM = 1;
+  subgroupsN = 8;
+  intrinsicsM = 16;
+  intrinsicsN = 2;
+  intrinsicsK = 2;
   return DataTiledMMAAttr::get(ctx, intrinsicMma.getIntrinsic(), intrinsicsM,
                                subgroupsM, intrinsicsN, subgroupsN,
                                intrinsicsK);

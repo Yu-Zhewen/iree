@@ -18,6 +18,7 @@
 #include "iree/compiler/Dialect/Util/IR/UtilDialect.h"
 #include "iree/compiler/Utils/ShapeUtils.h"
 #include "llvm/ADT/SmallVectorExtras.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/LLVMIR/ROCDLDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -72,12 +73,15 @@ static LogicalResult annotateOperation(PatternRewriter &rewriter,
 static LogicalResult matchContraction(PatternRewriter &rewriter,
                                       Operation *rootOp, Attribute elementTypes,
                                       Attribute indexingMaps) {
+  LLVM_DEBUG(llvm::dbgs() << "matchContraction: " << *rootOp << "\n");
   auto linalgOp = dyn_cast<linalg::LinalgOp>(rootOp);
   if (!linalgOp || !linalg::isaContractionOpInterface(linalgOp)) {
+    LLVM_DEBUG(llvm::dbgs() << "not a contraction like linalg op\n");
     return rewriter.notifyMatchFailure(rootOp,
                                        "not a contraction like linalg op");
   }
   if (linalgOp.getIndexingMaps() != indexingMaps) {
+    LLVM_DEBUG(llvm::dbgs() << "indexing maps mismatch\n");
     return rewriter.notifyMatchFailure(rootOp, "indexing maps mismatch");
   }
 
@@ -86,7 +90,53 @@ static LogicalResult matchContraction(PatternRewriter &rewriter,
         return TypeAttr::get(getElementTypeOrSelf(t));
       });
   if (rewriter.getArrayAttr(opElemTypes) != elementTypes) {
+    LLVM_DEBUG(llvm::dbgs() << "element types mismatch\n");
     return rewriter.notifyMatchFailure(rootOp, "element types mismatch");
+  }
+  LLVM_DEBUG(llvm::dbgs() << "--success\n");
+  return success();
+}
+
+/// Helper to match ops with specific element types.
+static LogicalResult matchElementTypes(PatternRewriter &rewriter,
+                                       Operation *rootOp,
+                                       Attribute elementTypes) {
+  SmallVector<Attribute> opElemTypes =
+      llvm::map_to_vector(rootOp->getOperandTypes(), [](Type t) -> Attribute {
+        return TypeAttr::get(getElementTypeOrSelf(t));
+      });
+  if (rewriter.getArrayAttr(opElemTypes) != elementTypes) {
+    return rewriter.notifyMatchFailure(rootOp, "element types mismatch");
+  }
+  return success();
+}
+
+/// Helper to match linalg ops with specific indexing maps.
+static LogicalResult matchIndexingMaps(PatternRewriter &rewriter,
+                                       Operation *rootOp,
+                                       Attribute indexingMaps) {
+  auto indexingMapOp = dyn_cast<IndexingMapOpInterface>(rootOp);
+  if (!indexingMapOp) {
+    return rewriter.notifyMatchFailure(rootOp, "not an op with indexing maps");
+  }
+  if (indexingMapOp.getIndexingMaps() != indexingMaps) {
+    return rewriter.notifyMatchFailure(rootOp, "indexing maps mismatch");
+  }
+  return success();
+}
+
+/// Helper to check whether the given value is cast-compatible with the given
+/// type.
+static LogicalResult matchCastCompatibleType(PatternRewriter &rewriter,
+                                             Value value, Type type) {
+  if (auto targetTensorType = dyn_cast<RankedTensorType>(type)) {
+    if (!isCastableToTensorType(value.getType(), targetTensorType)) {
+      return failure();
+    }
+    return success();
+  }
+  if (value.getType() != type) {
+    return failure();
   }
   return success();
 }
@@ -195,7 +245,11 @@ populatePDLModuleFromBuiltin(MLIRContext *context, RewritePatternSet &patterns,
   pdlModule.registerConstraintFunction("hasAttr", hasAttr);
   pdlModule.registerConstraintFunction("dimIsBound", dimIsBound);
   pdlModule.registerConstraintFunction("dimIsMultipleOf", dimIsMultipleOf);
+  pdlModule.registerConstraintFunction("matchCastCompatibleType",
+                                       matchCastCompatibleType);
   pdlModule.registerConstraintFunction("matchContraction", matchContraction);
+  pdlModule.registerConstraintFunction("matchElementTypes", matchElementTypes);
+  pdlModule.registerConstraintFunction("matchIndexingMaps", matchIndexingMaps);
   pdlModule.registerRewriteFunction("annotateOperation", annotateOperation);
   patterns.insert(std::move(pdlModule));
   return success();
@@ -305,6 +359,9 @@ public:
           dyn_cast_or_null<StringAttr>(op->getAttr(kBuiltinName));
       auto ukernelDesc = getUKernelDescriptor(op);
       if (!builtinName || !ukernelDesc) {
+        return WalkResult::advance();
+      }
+      if (ukernelSymbols.contains(ukernelDesc.getUkernelName())) {
         return WalkResult::advance();
       }
       if (ukernelSymbols.contains(ukernelDesc.getUkernelName())) {

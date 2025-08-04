@@ -299,7 +299,6 @@ func.func @negative_matmul_bf16(%arg0: tensor<256x4096xbf16>, %arg1: tensor<1024
 
 #map1 = affine_map<(d0, d1, d2) -> (d0, d2)>
 #map2 = affine_map<(d0, d1, d2) -> (d1, d2)>
-#map3 = affine_map<(d0, d1, d2) -> (d0, d1)>
 func.func @negative_matmul_bf16_large_no_zero_fill(%arg0: tensor<1024x4096xbf16>, %arg1: tensor<1024x4096xbf16>) -> tensor<1024x1024xf32> {
   %cst = arith.constant 1.000000e+00 : f32
   %0 = tensor.empty() : tensor<1024x1024xf32>
@@ -321,8 +320,6 @@ func.func @negative_matmul_bf16_large_no_zero_fill(%arg0: tensor<1024x4096xbf16>
 // -----
 
 // The dynamic dimension is a multiple of 256, but doesn't have a lower bound of 256.
-
-#map1 = affine_map<(d0, d1, d2, d3) -> (d0, d1, d3)>
 #map2 = affine_map<(d0, d1, d2, d3) -> (d2, d3)>
 #map3 = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2)>
 func.func @negative_matmul_bf16_dynamic_lower_bound(%arg0: index) -> tensor<1x256x1024xf32> {
