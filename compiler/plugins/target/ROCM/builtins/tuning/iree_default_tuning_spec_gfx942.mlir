@@ -1244,22 +1244,16 @@ util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?
       %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x1x8x1x1x1x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
       %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x1x1x2x1x1x1x8xf8E4M3FNUZ> to vector<2x1x1x8xf8E4M3FNUZ>
 
-      rocdl.sched.barrier 0
-
       // Global loads of rhs.
       %rhs_thread_0 = tensor.extract_slice %rhs_base [%c0, %i, %ids#1, %c0, %ids#2, %ids#3, %c0, %c0] [1, 1, 1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1, 1, 1] : tensor<1x?x4x2x4x16x2x8xf8E4M3FNUZ> to tensor<1x1x1x1x1x1x2x8xf8E4M3FNUZ>
       %rhs_vec_local_0 = vector.transfer_read %rhs_thread_0 [%c0, %c0, %c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true, true, true]} : tensor<1x1x1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x1x1x2x8xf8E4M3FNUZ>
       %rhs_thread_1 = tensor.extract_slice %rhs_base [%c0, %i, %ids#1, %c1, %ids#2, %ids#3, %c0, %c0] [1, 1, 1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1, 1, 1] : tensor<1x?x4x2x4x16x2x8xf8E4M3FNUZ> to tensor<1x1x1x1x1x1x2x8xf8E4M3FNUZ>
       %rhs_vec_local_1 = vector.transfer_read %rhs_thread_1 [%c0, %c0, %c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true, true, true]} : tensor<1x1x1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x1x1x2x8xf8E4M3FNUZ>
 
-      rocdl.sched.barrier 0
-
       %lhs_vec_2 = vector.transfer_read %lhs_shared[%c0, %c0, %c0, %ids#2, %m_inner_ids#0, %m_inner_ids#1, %c1, %c0], %cst {in_bounds = [true, true, true, true, true, true, true, true]} : memref<1x1x8x4x4x4x2x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x8x1x1x1x1x8xf8E4M3FNUZ>
       %rhs_vec_2 = vector.transfer_read %rhs_shared[%c0, %c0, %ids#1, %c0, %ids#2, %ids#3, %c1, %c0], %cst {in_bounds = [true, true, true, true, true, true, true, true]} : memref<1x1x4x2x4x16x2x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x2x1x1x1x8xf8E4M3FNUZ>
       %lhs_vec_2_t = vector.shape_cast %lhs_vec_2 : vector<1x1x8x1x1x1x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
       %rhs_vec_2_t = vector.shape_cast %rhs_vec_2 : vector<1x1x1x2x1x1x1x8xf8E4M3FNUZ> to vector<2x1x1x8xf8E4M3FNUZ>
-
-      rocdl.sched.barrier 0
 
       // Global loads of lhs.
       %lhs_thread_0 = tensor.extract_slice %lhs_base [%c0, %i, %glb0_lhs, %ids#2, %m_inner_ids#0, %m_inner_ids#1, %c0, %c0] [1, 1, 1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1, 1, 1] : tensor<1x?x8x4x4x4x2x8xf8E4M3FNUZ> to tensor<1x1x1x1x1x1x2x8xf8E4M3FNUZ>
