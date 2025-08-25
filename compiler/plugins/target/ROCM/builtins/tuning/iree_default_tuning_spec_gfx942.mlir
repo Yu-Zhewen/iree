@@ -1232,8 +1232,8 @@ util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?
 
     %2 = arith.constant dense<0.0> : vector<8x2x1x4xf32>
 
-    %cmp0 = arith.cmpi slt, %id, %c128 : index
-    %cmp1 = arith.cmpi sge, %id, %c128 : index
+    %cmp0 = arith.cmpi slt, %id, %c256 : index
+    %cmp1 = arith.cmpi sge, %id, %c256 : index
     scf.if %cmp0 {
       rocdl.s.barrier
     }
