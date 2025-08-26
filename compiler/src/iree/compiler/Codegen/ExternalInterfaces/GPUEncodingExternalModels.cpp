@@ -200,8 +200,8 @@ chooseDataTiledMMAAttr(TypeRange eTypes, TargetAttr target,
   //
   // That does simplify the below adjustments for narrow M/N, as we don't need
   // to think about unroll-to-subgroups when making the narrowing adjustment.
-  int subgroupsM = 1;
-  int subgroupsN = *wgp.getSimdsPerWgp();
+  int subgroupsM = 2;
+  int subgroupsN = (*wgp.getSimdsPerWgp()) / 2;
   int intrinsicsM = totalUnrollM / subgroupsM;
   int intrinsicsN = totalUnrollN / subgroupsN;
 
