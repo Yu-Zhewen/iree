@@ -1209,8 +1209,14 @@ util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x
   %lhs = tensor.collapse_shape %lhs_base [[0, 1], [2, 3], [4, 5, 6], [7, 8]] : tensor<1x?x2x8x4x4x4x4x8xf8E4M3FNUZ> into tensor<?x16x64x32xf8E4M3FNUZ>
   %rhs = tensor.collapse_shape %rhs_base [[0, 1], [2, 3], [4, 5], [6, 7]] : tensor<1x?x4x4x4x16x4x8xf8E4M3FNUZ> into tensor<?x16x64x32xf8E4M3FNUZ>
 
-  %lhs_shared = memref.alloc() : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-  %rhs_shared = memref.alloc() : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+  %lhs_shared_base = memref.alloc() : !flat_shared_f8
+  %rhs_shared_base = memref.alloc() : !flat_shared_f8
+
+  %lhs_shared_swizzle = iree_codegen.swizzle_hint %lhs_shared_base[#iree_codegen.rotate_rows<128, 8>] : !flat_shared_f8
+  %rhs_shared_swizzle = iree_codegen.swizzle_hint %rhs_shared_base[#iree_codegen.rotate_rows<128, 8>] : !flat_shared_f8
+
+  %lhs_shared = memref.expand_shape %lhs_shared_swizzle [[0, 1, 2, 3]] output_shape [1, 16, 64, 32] : !flat_shared_f8 into memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+  %rhs_shared = memref.expand_shape %rhs_shared_swizzle [[0, 1, 2, 3]] output_shape [1, 16, 64, 32] : !flat_shared_f8 into memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
 
   scf.forall (%id) in (2048) {
     %delin:3 = affine.delinearize_index %id into (16, 64, 2) : index, index, index
@@ -2020,8 +2026,14 @@ util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?
   %lhs = tensor.collapse_shape %lhs_base [[0, 1], [2, 3], [4, 5, 6], [7, 8]] : tensor<1x?x2x4x4x4x4x4x8xf8E4M3FNUZ> into tensor<?x8x64x32xf8E4M3FNUZ>
   %rhs = tensor.collapse_shape %rhs_base [[0, 1], [2, 3], [4, 5], [6, 7]] : tensor<1x?x4x4x4x16x4x8xf8E4M3FNUZ> into tensor<?x16x64x32xf8E4M3FNUZ>
 
-  %lhs_shared = memref.alloc() : memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-  %rhs_shared = memref.alloc() : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+  %lhs_shared_base = memref.alloc() : !mflat_shared_f8
+  %rhs_shared_base = memref.alloc() : !flat_shared_f8
+
+  %lhs_shared_swizzle = iree_codegen.swizzle_hint %lhs_shared_base[#iree_codegen.rotate_rows<128, 8>] : !mflat_shared_f8
+  %rhs_shared_swizzle = iree_codegen.swizzle_hint %rhs_shared_base[#iree_codegen.rotate_rows<128, 8>] : !flat_shared_f8
+
+  %lhs_shared = memref.expand_shape %lhs_shared_swizzle [[0, 1, 2, 3]] output_shape [1, 8, 64, 32] : !mflat_shared_f8 into memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+  %rhs_shared = memref.expand_shape %rhs_shared_swizzle [[0, 1, 2, 3]] output_shape [1, 16, 64, 32] : !flat_shared_f8 into memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
 
   scf.forall (%id) in (1024) {
     %delin:3 = affine.delinearize_index %id into (8, 64, 2) : index, index, index
