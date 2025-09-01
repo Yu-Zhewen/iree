@@ -2071,6 +2071,8 @@ util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?
       %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
       %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
 
+      rocdl.sched.barrier 0
+
       // Global loads of rhs.
       %rhs_block = tensor.extract_slice %rhs [%i, %glb0_rhs, %ids#2, %gko] [1, 4, 1, 16] [1, 1, 1, 1] : tensor<?x16x64x32xf8E4M3FNUZ> to tensor<1x4x1x16xf8E4M3FNUZ>
       %rhs_thread_0 = tensor.extract_slice %rhs_block [%c0, %c0, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
@@ -2082,11 +2084,15 @@ util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?
       %rhs_thread_3 = tensor.extract_slice %rhs_block [%c0, %c3, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
       %rhs_vec_local_3 = vector.transfer_read %rhs_thread_3 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
 
+      rocdl.sched.barrier 0
+
       // Local loads.
       %lhs_vec_1 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c16], %cst {in_bounds = [true, true, true, true]} : memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x16xf8E4M3FNUZ>
       %rhs_vec_1 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c16], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x16xf8E4M3FNUZ>
       %lhs_vec_1_t = vector.shape_cast %lhs_vec_1 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
       %rhs_vec_1_t = vector.shape_cast %rhs_vec_1 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
+
+      rocdl.sched.barrier 0
 
       // Global loads of lhs.
       %lhs_block = tensor.extract_slice %lhs [%i, %glb0_lhs, %ids#2, %gko] [1, 2, 1, 16] [1, 1, 1, 1] : tensor<?x8x64x32xf8E4M3FNUZ> to tensor<1x2x1x16xf8E4M3FNUZ>
