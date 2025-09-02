@@ -229,19 +229,11 @@ chooseDataTiledMMAAttr(TypeRange eTypes, TargetAttr target,
 
   SmallVector<int64_t> iterationSizes = encoding.getIterationSizesArray();
 
-  if (iterationSizes[1] >= 2048) {
-    subgroupsM = 2;
-    subgroupsN = 4;
-    intrinsicsM = 8;
-    intrinsicsN = 4;
-    intrinsicsK = 4;
-  } else {
-    subgroupsM = 2;
-    subgroupsN = 4;
-    intrinsicsM = 4;
-    intrinsicsN = 4;
-    intrinsicsK = 4;
-  }
+  subgroupsM = 2;
+  subgroupsN = 4;
+  intrinsicsM = 8;
+  intrinsicsN = 4;
+  intrinsicsK = 1;
   return DataTiledMMAAttr::get(ctx, intrinsicMma.getIntrinsic(), intrinsicsM,
                                subgroupsM, intrinsicsN, subgroupsN,
                                intrinsicsK);

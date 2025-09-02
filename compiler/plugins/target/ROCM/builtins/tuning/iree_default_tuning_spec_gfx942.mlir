@@ -1192,45 +1192,41 @@ util.func private @pingpong_large_f8_expanded(%lhs_base: !exp_in_ty_f8, %rhs_bas
 // ------------------------------------------------------------
 // * Data-tiling Large Pingpong f8 *
 // ------------------------------------------------------------
-util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x2x8x4x4x4x4x8xf8E4M3FNUZ>, %rhs_base: tensor<1x?x4x4x4x16x4x8xf8E4M3FNUZ>, %unused_acc: tensor<1x1x2x4x8x4x4x16x4xf32>) -> tensor<1x1x2x4x8x4x4x16x4xf32> {
+util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x2x8x4x4x4x8xf8E4M3FNUZ>, %rhs_base: tensor<1x?x4x4x4x16x8xf8E4M3FNUZ>, %unused_acc: tensor<1x1x2x4x8x4x4x16x4xf32>) -> tensor<1x1x2x4x8x4x4x16x4xf32> {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
   %c3 = arith.constant 3 : index
   %c4 = arith.constant 4 : index
-  %c8 = arith.constant 8 : index
   %c16 = arith.constant 16 : index
-  %c24 = arith.constant 24 : index
   %c256 = arith.constant 256 : index
   %cst = arith.constant 0.0 : f8E4M3FNUZ
 
-  %dim = tensor.dim %rhs_base, %c1 : tensor<1x?x4x4x4x16x4x8xf8E4M3FNUZ>
+  %dim = tensor.dim %rhs_base, %c1 : tensor<1x?x4x4x4x16x8xf8E4M3FNUZ>
+  %nDim = arith.divui %dim, %c4 : index
 
-  %lhs = tensor.collapse_shape %lhs_base [[0, 1], [2, 3], [4, 5, 6], [7, 8]] : tensor<1x?x2x8x4x4x4x4x8xf8E4M3FNUZ> into tensor<?x16x64x32xf8E4M3FNUZ>
-  %rhs = tensor.collapse_shape %rhs_base [[0, 1], [2, 3], [4, 5], [6, 7]] : tensor<1x?x4x4x4x16x4x8xf8E4M3FNUZ> into tensor<?x16x64x32xf8E4M3FNUZ>
+  %lhs_expand = tensor.expand_shape %lhs_base [[0], [1, 2], [3], [4], [5], [6], [7], [8]] output_shape [1, %nDim, 2, 2, 8, 4, 4, 4, 8] : tensor<1x?x2x8x4x4x4x8xf8E4M3FNUZ> into tensor<1x?x4x2x8x4x4x4x8xf8E4M3FNUZ>
+  %rhs_expand = tensor.expand_shape %rhs_base [[0], [1, 2], [3], [4], [5], [6], [7]] output_shape [1, %nDim, 2, 4, 4, 4, 16, 8] : tensor<1x?x4x4x4x16x8xf8E4M3FNUZ> into tensor<1x?x4x4x4x4x16x8xf8E4M3FNUZ>
 
-  %lhs_shared_base = memref.alloc() : !flat_shared_f8
-  %rhs_shared_base = memref.alloc() : !flat_shared_f8
+  %lhs = tensor.collapse_shape %lhs_expand [[0, 1], [2], [3], [4], [5, 6, 7], [8]] : tensor<1x?x4x2x8x4x4x4x8xf8E4M3FNUZ> into tensor<?x4x2x8x64x8xf8E4M3FNUZ>
+  %rhs = tensor.collapse_shape %rhs_expand [[0, 1], [2], [3], [4], [5, 6], [7]] : tensor<1x?x4x4x4x4x16x8xf8E4M3FNUZ> into tensor<?x4x4x4x64x8xf8E4M3FNUZ>
 
-  %lhs_shared_swizzle = iree_codegen.swizzle_hint %lhs_shared_base[#iree_codegen.rotate_rows<128, 8>] : !flat_shared_f8
-  %rhs_shared_swizzle = iree_codegen.swizzle_hint %rhs_shared_base[#iree_codegen.rotate_rows<128, 8>] : !flat_shared_f8
-
-  %lhs_shared = memref.expand_shape %lhs_shared_swizzle [[0, 1, 2, 3]] output_shape [1, 16, 64, 32] : !flat_shared_f8 into memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-  %rhs_shared = memref.expand_shape %rhs_shared_swizzle [[0, 1, 2, 3]] output_shape [1, 16, 64, 32] : !flat_shared_f8 into memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+  %lhs_shared = memref.alloc() : memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+  %rhs_shared = memref.alloc() : memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
 
   scf.forall (%id) in (2048) {
-    %delin:3 = affine.delinearize_index %id into (16, 64, 2) : index, index, index
-    %vec = arith.muli %delin#2, %c16 overflow<nsw, nuw> : index
-    %lhs_thread_local = tensor.extract_slice %lhs [%c0, %delin#0, %delin#1, %vec] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<?x16x64x32xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-    %lhs_vec_local = vector.transfer_read %lhs_thread_local [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-    vector.transfer_write %lhs_vec_local, %lhs_shared[%c0, %delin#0, %delin#1, %vec] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+    %delin:4 = affine.delinearize_index %id into (4, 2, 8, 32) : index, index, index, index
+    %inner = arith.muli %delin#3, %c2 overflow<nsw, nuw> : index
+    %lhs_thread_local = tensor.extract_slice %lhs [%c0, %delin#0, %delin#1, %delin#2, %inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1]  : tensor<?x4x2x8x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+    %lhs_vec_local = vector.transfer_read %lhs_thread_local [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+    vector.transfer_write %lhs_vec_local, %lhs_shared[%c0, %delin#0, %delin#1, %delin#2, %inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
   } {mapping = [#gpu.thread<linear_dim_0>]}
   scf.forall (%id) in (2048) {
-    %delin:3 = affine.delinearize_index %id into (16, 64, 2) : index, index, index
-    %vec = arith.muli %delin#2, %c16 overflow<nsw, nuw> : index
-    %rhs_thread_local = tensor.extract_slice %rhs [%c0, %delin#0, %delin#1, %vec] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<?x16x64x32xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-    %rhs_vec_local = vector.transfer_read %rhs_thread_local [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-    vector.transfer_write %rhs_vec_local, %rhs_shared[%c0, %delin#0, %delin#1, %vec] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+    %delin:4 = affine.delinearize_index %id into (4, 4, 4, 32) : index, index, index, index
+    %inner = arith.muli %delin#3, %c2 overflow<nsw, nuw> : index
+    %rhs_thread_local = tensor.extract_slice %rhs [%c0, %delin#0, %delin#1, %delin#2, %inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] : tensor<?x4x4x4x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+    %rhs_vec_local = vector.transfer_read %rhs_thread_local [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+    vector.transfer_write %rhs_vec_local, %rhs_shared[%c0, %delin#0, %delin#1, %delin#2, %inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
   } {mapping = [#gpu.thread<linear_dim_0>]}
 
   %0 = tensor.empty() : tensor<1x1x2x4x8x4x4x16x4xf32>
@@ -1238,15 +1234,11 @@ util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x
     %ids:3 = affine.delinearize_index %id into (2, 4, 64) : index, index, index
     %threads:2 = affine.delinearize_index %ids#2 into (4, 16) : index, index
 
-    %m_outer_id = arith.muli %ids#0, %c8 overflow<nsw, nuw> : index
-    %n_outer_id = arith.muli %ids#1, %c4 overflow<nsw, nuw> : index
+    %glb_rhs:3 = affine.delinearize_index %id into (4, 4, 32) : index, index, index
+    %glb_rhs_inner = arith.muli %glb_rhs#2, %c2 overflow<nsw, nuw> : index
 
-    %glb0 = arith.muli %ids#1, %c4 overflow<nsw, nuw> : index
-    %glb1 = arith.addi %glb0, %c1 overflow<nsw, nuw> : index
-    %glb2 = arith.addi %glb1, %c1 overflow<nsw, nuw> : index
-    %glb3 = arith.addi %glb2, %c1 overflow<nsw, nuw> : index
-
-    %gko = arith.muli %ids#0, %c16 overflow<nsw, nuw> : index
+    %glb_lhs:3 = affine.delinearize_index %id into (2, 8, 32) : index, index, index
+    %glb_lhs_inner = arith.muli %glb_lhs#2, %c2 overflow<nsw, nuw> : index
 
     %2 = arith.constant dense<0.0> : vector<8x4x1x4xf32>
 
@@ -1256,23 +1248,22 @@ util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x
       rocdl.s.barrier
     }
 
-    %3 = scf.for %i = %c1 to %dim step %c1 iter_args(%iter = %2) -> vector<8x4x1x4xf32> {
+    %3 = scf.for %i = %c1 to %nDim step %c1 iter_args(%iter = %2) -> vector<8x4x1x4xf32> {
       // Global loads of lhs.
-      %lhs_block = tensor.extract_slice %lhs [%i, %glb0, %ids#2, %gko] [1, 4, 1, 16] [1, 1, 1, 1] : tensor<?x16x64x32xf8E4M3FNUZ> to tensor<1x4x1x16xf8E4M3FNUZ>
-      %lhs_thread_0 = tensor.extract_slice %lhs_block [%c0, %c0, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %lhs_vec_local_0 = vector.transfer_read %lhs_thread_0 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-      %lhs_thread_1 = tensor.extract_slice %lhs_block [%c0, %c1, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %lhs_vec_local_1 = vector.transfer_read %lhs_thread_1 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-      %lhs_thread_2 = tensor.extract_slice %lhs_block [%c0, %c2, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %lhs_vec_local_2 = vector.transfer_read %lhs_thread_2 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-      %lhs_thread_3 = tensor.extract_slice %lhs_block [%c0, %c3, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %lhs_vec_local_3 = vector.transfer_read %lhs_thread_3 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-
+      %lhs_thread_0 = tensor.extract_slice %lhs [%i, %c0, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] :  tensor<?x4x2x8x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %lhs_vec_local_0 = vector.transfer_read %lhs_thread_0 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+      %lhs_thread_1 = tensor.extract_slice %lhs [%i, %c1, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] : tensor<?x4x2x8x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %lhs_vec_local_1 = vector.transfer_read %lhs_thread_1 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+      %lhs_thread_2 = tensor.extract_slice %lhs [%i, %c2, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] :  tensor<?x4x2x8x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %lhs_vec_local_2 = vector.transfer_read %lhs_thread_2 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+      %lhs_thread_3 = tensor.extract_slice %lhs [%i, %c3, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] : tensor<?x4x2x8x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %lhs_vec_local_3 = vector.transfer_read %lhs_thread_3 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+      
       // Local loads.
-      %lhs_vec_0 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x8x1x8xf8E4M3FNUZ>
-      %rhs_vec_0 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x8xf8E4M3FNUZ>
-      %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
-      %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
+      %lhs_vec_0 = vector.transfer_read %lhs_shared[%c0, %c0, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+      %rhs_vec_0 = vector.transfer_read %rhs_shared[%c0, %c0, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+      %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+      %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
       gpu.barrier
       rocdl.sched.barrier 0
@@ -1289,21 +1280,20 @@ util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x
       rocdl.sched.barrier 0
 
       // Global loads of rhs.
-      %rhs_block = tensor.extract_slice %rhs [%i, %glb0, %ids#2, %gko] [1, 4, 1, 16] [1, 1, 1, 1] : tensor<?x16x64x32xf8E4M3FNUZ> to tensor<1x4x1x16xf8E4M3FNUZ>
-      %rhs_thread_0 = tensor.extract_slice %rhs_block [%c0, %c0, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %rhs_vec_local_0 = vector.transfer_read %rhs_thread_0 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-      %rhs_thread_1 = tensor.extract_slice %rhs_block [%c0, %c1, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %rhs_vec_local_1 = vector.transfer_read %rhs_thread_1 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-      %rhs_thread_2 = tensor.extract_slice %rhs_block [%c0, %c2, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %rhs_vec_local_2 = vector.transfer_read %rhs_thread_2 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-      %rhs_thread_3 = tensor.extract_slice %rhs_block [%c0, %c3, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %rhs_vec_local_3 = vector.transfer_read %rhs_thread_3 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
+      %rhs_thread_0 = tensor.extract_slice %rhs [%i, %c0, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] :  tensor<?x4x4x4x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %rhs_vec_local_0 = vector.transfer_read %rhs_thread_0 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+      %rhs_thread_1 = tensor.extract_slice %rhs [%i, %c1, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] : tensor<?x4x4x4x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %rhs_vec_local_1 = vector.transfer_read %rhs_thread_1 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+      %rhs_thread_2 = tensor.extract_slice %rhs [%i, %c2, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] :  tensor<?x4x4x4x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %rhs_vec_local_2 = vector.transfer_read %rhs_thread_2 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+      %rhs_thread_3 = tensor.extract_slice %rhs [%i, %c3, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] : tensor<?x4x4x4x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %rhs_vec_local_3 = vector.transfer_read %rhs_thread_3 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
 
       // Local loads.
-      %lhs_vec_1 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c8], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x8x1x8xf8E4M3FNUZ>
-      %rhs_vec_1 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c8], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x8xf8E4M3FNUZ>
-      %lhs_vec_1_t = vector.shape_cast %lhs_vec_1 : vector<1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
-      %rhs_vec_1_t = vector.shape_cast %rhs_vec_1 : vector<1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
+      %lhs_vec_1 = vector.transfer_read %lhs_shared[%c0, %c1, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+      %rhs_vec_1 = vector.transfer_read %rhs_shared[%c0, %c1, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+      %lhs_vec_1_t = vector.shape_cast %lhs_vec_1 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+      %rhs_vec_1_t = vector.shape_cast %rhs_vec_1 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
       gpu.barrier
       rocdl.sched.barrier 0
@@ -1320,15 +1310,16 @@ util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x
       rocdl.sched.barrier 0
 
       // Local loads.
-      %lhs_vec_2 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c16], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x8x1x8xf8E4M3FNUZ>
-      %rhs_vec_2 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c16], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x8xf8E4M3FNUZ>
-      %lhs_vec_2_t = vector.shape_cast %lhs_vec_2 : vector<1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
-      %rhs_vec_2_t = vector.shape_cast %rhs_vec_2 : vector<1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
+      %lhs_vec_2 = vector.transfer_read %lhs_shared[%c0, %c2, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+      %rhs_vec_2 = vector.transfer_read %rhs_shared[%c0, %c2, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+      %lhs_vec_2_t = vector.shape_cast %lhs_vec_2 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+      %rhs_vec_2_t = vector.shape_cast %rhs_vec_2 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
-      %lhs_vec_3 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c24], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x8x1x8xf8E4M3FNUZ>
-      %rhs_vec_3 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c24], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x8xf8E4M3FNUZ>
-      %lhs_vec_3_t = vector.shape_cast %lhs_vec_3 : vector<1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
-      %rhs_vec_3_t = vector.shape_cast %rhs_vec_3 : vector<1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
+      // Local loads.
+      %lhs_vec_3 = vector.transfer_read %lhs_shared[%c0, %c3, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+      %rhs_vec_3 = vector.transfer_read %rhs_shared[%c0, %c3, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+      %lhs_vec_3_t = vector.shape_cast %lhs_vec_3 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+      %rhs_vec_3_t = vector.shape_cast %rhs_vec_3 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
       gpu.barrier
       rocdl.sched.barrier 0
@@ -1344,15 +1335,15 @@ util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x
       gpu.barrier
       rocdl.sched.barrier 0
 
-      vector.transfer_write %lhs_vec_local_0, %lhs_shared[%c0, %glb0, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-      vector.transfer_write %lhs_vec_local_1, %lhs_shared[%c0, %glb1, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-      vector.transfer_write %lhs_vec_local_2, %lhs_shared[%c0, %glb2, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-      vector.transfer_write %lhs_vec_local_3, %lhs_shared[%c0, %glb3, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-
-      vector.transfer_write %rhs_vec_local_0, %rhs_shared[%c0, %glb0, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-      vector.transfer_write %rhs_vec_local_1, %rhs_shared[%c0, %glb1, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-      vector.transfer_write %rhs_vec_local_2, %rhs_shared[%c0, %glb2, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-      vector.transfer_write %rhs_vec_local_3, %rhs_shared[%c0, %glb3, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      vector.transfer_write %rhs_vec_local_0, %rhs_shared [%c0, %c0, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      vector.transfer_write %rhs_vec_local_1, %rhs_shared [%c0, %c1, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      vector.transfer_write %rhs_vec_local_2, %rhs_shared [%c0, %c2, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      vector.transfer_write %rhs_vec_local_3, %rhs_shared [%c0, %c3, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+        
+      vector.transfer_write %lhs_vec_local_0, %lhs_shared [%c0, %c0, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      vector.transfer_write %lhs_vec_local_1, %lhs_shared [%c0, %c1, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      vector.transfer_write %lhs_vec_local_2, %lhs_shared [%c0, %c2, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      vector.transfer_write %lhs_vec_local_3, %lhs_shared [%c0, %c3, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
 
       gpu.barrier
       rocdl.sched.barrier 0
@@ -1375,10 +1366,10 @@ util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x
     }
 
     // Epilogue
-    %lhs_vec_0 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x8x1x8xf8E4M3FNUZ>
-    %rhs_vec_0 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x8xf8E4M3FNUZ>
-    %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
-    %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
+    %lhs_vec_0 = vector.transfer_read %lhs_shared[%c0, %c0, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+    %rhs_vec_0 = vector.transfer_read %rhs_shared[%c0, %c0, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+    %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+    %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
     %dot0 = iree_codegen.inner_tiled ins(%lhs_vec_0_t, %rhs_vec_0_t) outs(%3) {
       indexing_maps = #contraction_accesses,
@@ -1386,10 +1377,10 @@ util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x
       kind = #iree_gpu.mma_layout<MFMA_F32_16x16x32_F8E4M3FNUZ>
     } : vector<8x1x1x8xf8E4M3FNUZ>, vector<4x1x1x8xf8E4M3FNUZ> into vector<8x4x1x4xf32>
 
-    %lhs_vec_1 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c8], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x8x1x8xf8E4M3FNUZ>
-    %rhs_vec_1 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c8], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x8xf8E4M3FNUZ>
-    %lhs_vec_1_t = vector.shape_cast %lhs_vec_1 : vector<1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
-    %rhs_vec_1_t = vector.shape_cast %rhs_vec_1 : vector<1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
+    %lhs_vec_1 = vector.transfer_read %lhs_shared[%c0, %c1, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+    %rhs_vec_1 = vector.transfer_read %rhs_shared[%c0, %c1, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+    %lhs_vec_1_t = vector.shape_cast %lhs_vec_1 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+    %rhs_vec_1_t = vector.shape_cast %rhs_vec_1 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
     %dot1 = iree_codegen.inner_tiled ins(%lhs_vec_1_t, %rhs_vec_1_t) outs(%dot0) {
       indexing_maps = #contraction_accesses,
@@ -1397,10 +1388,10 @@ util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x
       kind = #iree_gpu.mma_layout<MFMA_F32_16x16x32_F8E4M3FNUZ>
     } : vector<8x1x1x8xf8E4M3FNUZ>, vector<4x1x1x8xf8E4M3FNUZ> into vector<8x4x1x4xf32>
 
-    %lhs_vec_2 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c16], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x8x1x8xf8E4M3FNUZ>
-    %rhs_vec_2 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c16], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x8xf8E4M3FNUZ>
-    %lhs_vec_2_t = vector.shape_cast %lhs_vec_2 : vector<1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
-    %rhs_vec_2_t = vector.shape_cast %rhs_vec_2 : vector<1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
+    %lhs_vec_2 = vector.transfer_read %lhs_shared[%c0, %c2, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+    %rhs_vec_2 = vector.transfer_read %rhs_shared[%c0, %c2, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+    %lhs_vec_2_t = vector.shape_cast %lhs_vec_2 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+    %rhs_vec_2_t = vector.shape_cast %rhs_vec_2 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
     %dot2 = iree_codegen.inner_tiled ins(%lhs_vec_2_t, %rhs_vec_2_t) outs(%dot1) {
       indexing_maps = #contraction_accesses,
@@ -1408,10 +1399,10 @@ util.func private @pingpong_large_f8_expanded_data_tiling(%lhs_base: tensor<1x?x
       kind = #iree_gpu.mma_layout<MFMA_F32_16x16x32_F8E4M3FNUZ>
     } : vector<8x1x1x8xf8E4M3FNUZ>, vector<4x1x1x8xf8E4M3FNUZ> into vector<8x4x1x4xf32>
 
-    %lhs_vec_3 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c24], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x8x1x8xf8E4M3FNUZ>
-    %rhs_vec_3 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c24], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x8xf8E4M3FNUZ>
-    %lhs_vec_3_t = vector.shape_cast %lhs_vec_3 : vector<1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
-    %rhs_vec_3_t = vector.shape_cast %rhs_vec_3 : vector<1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
+    %lhs_vec_3 = vector.transfer_read %lhs_shared[%c0, %c3, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+    %rhs_vec_3 = vector.transfer_read %rhs_shared[%c0, %c3, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x4x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+    %lhs_vec_3_t = vector.shape_cast %lhs_vec_3 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+    %rhs_vec_3_t = vector.shape_cast %rhs_vec_3 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
     %dot3 = iree_codegen.inner_tiled ins(%lhs_vec_3_t, %rhs_vec_3_t) outs(%dot2) {
       indexing_maps = #contraction_accesses,
@@ -2011,7 +2002,7 @@ util.func private @pingpong_medium_f8_expanded(%lhs_base: !mexp_in_ty_f8, %rhs_b
 // ------------------------------------------------------------
 // * Data-tiling Medium Pingpong f8 *
 // ------------------------------------------------------------
-util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?x2x4x4x4x4x4x8xf8E4M3FNUZ>, %rhs_base: tensor<1x?x4x4x4x16x4x8xf8E4M3FNUZ>, %unused_acc: tensor<1x1x2x4x4x4x4x16x4xf32>) -> tensor<1x1x2x4x4x4x4x16x4xf32> {
+util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?x2x8x4x4x4x8xf8E4M3FNUZ>, %rhs_base: tensor<1x?x4x4x4x16x8xf8E4M3FNUZ>, %unused_acc: tensor<1x1x2x4x8x4x4x16x4xf32>) -> tensor<1x1x2x4x8x4x4x16x4xf32> {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -2021,54 +2012,45 @@ util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?
   %c256 = arith.constant 256 : index
   %cst = arith.constant 0.0 : f8E4M3FNUZ
 
-  %dim = tensor.dim %rhs_base, %c1 : tensor<1x?x4x4x4x16x4x8xf8E4M3FNUZ>
+  %dim = tensor.dim %rhs_base, %c1 : tensor<1x?x4x4x4x16x8xf8E4M3FNUZ>
+  %nDim = arith.divui %dim, %c2 : index
 
-  %lhs = tensor.collapse_shape %lhs_base [[0, 1], [2, 3], [4, 5, 6], [7, 8]] : tensor<1x?x2x4x4x4x4x4x8xf8E4M3FNUZ> into tensor<?x8x64x32xf8E4M3FNUZ>
-  %rhs = tensor.collapse_shape %rhs_base [[0, 1], [2, 3], [4, 5], [6, 7]] : tensor<1x?x4x4x4x16x4x8xf8E4M3FNUZ> into tensor<?x16x64x32xf8E4M3FNUZ>
+  %lhs_expand = tensor.expand_shape %lhs_base [[0], [1, 2], [3], [4], [5], [6], [7], [8]] output_shape [1, %nDim, 2, 2, 8, 4, 4, 4, 8] : tensor<1x?x2x8x4x4x4x8xf8E4M3FNUZ> into tensor<1x?x2x2x8x4x4x4x8xf8E4M3FNUZ>
+  %rhs_expand = tensor.expand_shape %rhs_base [[0], [1, 2], [3], [4], [5], [6], [7]] output_shape [1, %nDim, 2, 4, 4, 4, 16, 8] : tensor<1x?x4x4x4x16x8xf8E4M3FNUZ> into tensor<1x?x2x4x4x4x16x8xf8E4M3FNUZ>
 
-  %lhs_shared_base = memref.alloc() : !mflat_shared_f8
-  %rhs_shared_base = memref.alloc() : !flat_shared_f8
+  %lhs = tensor.collapse_shape %lhs_expand [[0, 1], [2], [3], [4], [5, 6, 7], [8]] : tensor<1x?x2x2x8x4x4x4x8xf8E4M3FNUZ> into tensor<?x2x2x8x64x8xf8E4M3FNUZ>
+  %rhs = tensor.collapse_shape %rhs_expand [[0, 1], [2], [3], [4], [5, 6], [7]] : tensor<1x?x2x4x4x4x16x8xf8E4M3FNUZ> into tensor<?x2x4x4x64x8xf8E4M3FNUZ>
 
-  %lhs_shared_swizzle = iree_codegen.swizzle_hint %lhs_shared_base[#iree_codegen.rotate_rows<128, 8>] : !mflat_shared_f8
-  %rhs_shared_swizzle = iree_codegen.swizzle_hint %rhs_shared_base[#iree_codegen.rotate_rows<128, 8>] : !flat_shared_f8
-
-  %lhs_shared = memref.expand_shape %lhs_shared_swizzle [[0, 1, 2, 3]] output_shape [1, 8, 64, 32] : !mflat_shared_f8 into memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-  %rhs_shared = memref.expand_shape %rhs_shared_swizzle [[0, 1, 2, 3]] output_shape [1, 16, 64, 32] : !flat_shared_f8 into memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+  %lhs_shared = memref.alloc() : memref<1x2x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+  %rhs_shared = memref.alloc() : memref<1x2x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
 
   scf.forall (%id) in (1024) {
-    %delin:3 = affine.delinearize_index %id into (8, 64, 2) : index, index, index
-    %vec = arith.muli %delin#2, %c16 overflow<nsw, nuw> : index
-    %lhs_thread_local = tensor.extract_slice %lhs [%c0, %delin#0, %delin#1, %vec] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<?x8x64x32xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-    %lhs_vec_local = vector.transfer_read %lhs_thread_local [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-    vector.transfer_write %lhs_vec_local, %lhs_shared[%c0, %delin#0, %delin#1, %vec] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+    %delin:4 = affine.delinearize_index %id into (2, 2, 8, 32) : index, index, index, index
+    %inner = arith.muli %delin#3, %c2 overflow<nsw, nuw> : index
+    %lhs_thread_local = tensor.extract_slice %lhs [%c0, %delin#0, %delin#1, %delin#2, %inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1]  : tensor<?x2x2x8x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+    %lhs_vec_local = vector.transfer_read %lhs_thread_local [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+    vector.transfer_write %lhs_vec_local, %lhs_shared[%c0, %delin#0, %delin#1, %delin#2, %inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x2x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
   } {mapping = [#gpu.thread<linear_dim_0>]}
-  scf.forall (%id) in (2048) {
-    %delin:3 = affine.delinearize_index %id into (16, 64, 2) : index, index, index
-    %vec = arith.muli %delin#2, %c16 overflow<nsw, nuw> : index
-    %rhs_thread_local = tensor.extract_slice %rhs [%c0, %delin#0, %delin#1, %vec] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<?x16x64x32xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-    %rhs_vec_local = vector.transfer_read %rhs_thread_local [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-    vector.transfer_write %rhs_vec_local, %rhs_shared[%c0, %delin#0, %delin#1, %vec] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+  scf.forall (%id) in (1024) {
+    %delin:4 = affine.delinearize_index %id into (2, 4, 4, 32) : index, index, index, index
+    %inner = arith.muli %delin#3, %c2 overflow<nsw, nuw> : index
+    %rhs_thread_local = tensor.extract_slice %rhs [%c0, %delin#0, %delin#1, %delin#2, %inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] : tensor<?x2x4x4x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+    %rhs_vec_local = vector.transfer_read %rhs_thread_local [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+    vector.transfer_write %rhs_vec_local, %rhs_shared[%c0, %delin#0, %delin#1, %delin#2, %inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x2x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
   } {mapping = [#gpu.thread<linear_dim_0>]}
 
-  %0 = tensor.empty() : tensor<1x1x2x4x4x4x4x16x4xf32>
-  %1 = scf.forall (%id) in (512) shared_outs(%out = %0) -> tensor<1x1x2x4x4x4x4x16x4xf32> {
+  %0 = tensor.empty() : tensor<1x1x2x4x8x4x4x16x4xf32>
+  %1 = scf.forall (%id) in (512) shared_outs(%out = %0) -> tensor<1x1x2x4x8x4x4x16x4xf32> {
     %ids:3 = affine.delinearize_index %id into (2, 4, 64) : index, index, index
     %threads:2 = affine.delinearize_index %ids#2 into (4, 16) : index, index
 
-    %m_outer_id = arith.muli %ids#0, %c4 overflow<nsw, nuw> : index
-    %n_outer_id = arith.muli %ids#1, %c4 overflow<nsw, nuw> : index
+    %glb_rhs:3 = affine.delinearize_index %id into (4, 4, 32) : index, index, index
+    %glb_rhs_inner = arith.muli %glb_rhs#2, %c2 overflow<nsw, nuw> : index
 
-    %glb0_lhs = arith.muli %ids#1, %c2 overflow<nsw, nuw> : index
-    %glb1_lhs = arith.addi %glb0_lhs, %c1 overflow<nsw, nuw> : index
+    %glb_lhs:3 = affine.delinearize_index %id into (2, 8, 32) : index, index, index
+    %glb_lhs_inner = arith.muli %glb_lhs#2, %c2 overflow<nsw, nuw> : index
 
-    %glb0_rhs = arith.muli %ids#1, %c4 overflow<nsw, nuw> : index
-    %glb1_rhs = arith.addi %glb0_rhs, %c1 overflow<nsw, nuw> : index
-    %glb2_rhs = arith.addi %glb1_rhs, %c1 overflow<nsw, nuw> : index
-    %glb3_rhs = arith.addi %glb2_rhs, %c1 overflow<nsw, nuw> : index
-
-    %gko = arith.muli %ids#0, %c16 overflow<nsw, nuw> : index
-
-    %2 = arith.constant dense<0.0> : vector<4x4x1x4xf32>
+    %2 = arith.constant dense<0.0> : vector<8x4x1x4xf32>
 
     %cmp0 = arith.cmpi slt, %id, %c256 : index
     %cmp1 = arith.cmpi sge, %id, %c256 : index
@@ -2076,42 +2058,36 @@ util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?
       rocdl.s.barrier
     }
 
-    %3 = scf.for %i = %c1 to %dim step %c1 iter_args(%iter = %2) -> vector<4x4x1x4xf32> {
+    %3 = scf.for %i = %c1 to %nDim step %c1 iter_args(%iter = %2) -> vector<8x4x1x4xf32> {
       // Local loads.
-      %lhs_vec_0 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x16xf8E4M3FNUZ>
-      %rhs_vec_0 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x16xf8E4M3FNUZ>
-      %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
-      %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
+      %lhs_vec_0 = vector.transfer_read %lhs_shared[%c0, %c0, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x2x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+      %rhs_vec_0 = vector.transfer_read %rhs_shared[%c0, %c0, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x2x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+      %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+      %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
       rocdl.sched.barrier 0
 
       // Global loads of rhs.
-      %rhs_block = tensor.extract_slice %rhs [%i, %glb0_rhs, %ids#2, %gko] [1, 4, 1, 16] [1, 1, 1, 1] : tensor<?x16x64x32xf8E4M3FNUZ> to tensor<1x4x1x16xf8E4M3FNUZ>
-      %rhs_thread_0 = tensor.extract_slice %rhs_block [%c0, %c0, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %rhs_vec_local_0 = vector.transfer_read %rhs_thread_0 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-      %rhs_thread_1 = tensor.extract_slice %rhs_block [%c0, %c1, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %rhs_vec_local_1 = vector.transfer_read %rhs_thread_1 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-      %rhs_thread_2 = tensor.extract_slice %rhs_block [%c0, %c2, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %rhs_vec_local_2 = vector.transfer_read %rhs_thread_2 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-      %rhs_thread_3 = tensor.extract_slice %rhs_block [%c0, %c3, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x4x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %rhs_vec_local_3 = vector.transfer_read %rhs_thread_3 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
+      %rhs_thread_0 = tensor.extract_slice %rhs [%i, %c0, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] :  tensor<?x2x4x4x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %rhs_vec_local_0 = vector.transfer_read %rhs_thread_0 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+      %rhs_thread_1 = tensor.extract_slice %rhs [%i, %c1, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] : tensor<?x2x4x4x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %rhs_vec_local_1 = vector.transfer_read %rhs_thread_1 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
 
       rocdl.sched.barrier 0
 
       // Local loads.
-      %lhs_vec_1 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c16], %cst {in_bounds = [true, true, true, true]} : memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x16xf8E4M3FNUZ>
-      %rhs_vec_1 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c16], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x16xf8E4M3FNUZ>
-      %lhs_vec_1_t = vector.shape_cast %lhs_vec_1 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
-      %rhs_vec_1_t = vector.shape_cast %rhs_vec_1 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
+      %lhs_vec_1 = vector.transfer_read %lhs_shared[%c0, %c1, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x2x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+      %rhs_vec_1 = vector.transfer_read %rhs_shared[%c0, %c1, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x2x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+      %lhs_vec_1_t = vector.shape_cast %lhs_vec_1 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+      %rhs_vec_1_t = vector.shape_cast %rhs_vec_1 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
       rocdl.sched.barrier 0
 
       // Global loads of lhs.
-      %lhs_block = tensor.extract_slice %lhs [%i, %glb0_lhs, %ids#2, %gko] [1, 2, 1, 16] [1, 1, 1, 1] : tensor<?x8x64x32xf8E4M3FNUZ> to tensor<1x2x1x16xf8E4M3FNUZ>
-      %lhs_thread_0 = tensor.extract_slice %lhs_block [%c0, %c0, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x2x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %lhs_vec_local_0 = vector.transfer_read %lhs_thread_0 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
-      %lhs_thread_1 = tensor.extract_slice %lhs_block [%c0, %c1, %c0, %c0] [1, 1, 1, 16] [1, 1, 1, 1] : tensor<1x2x1x16xf8E4M3FNUZ> to tensor<1x1x1x16xf8E4M3FNUZ>
-      %lhs_vec_local_1 = vector.transfer_read %lhs_thread_1 [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x16xf8E4M3FNUZ>, vector<1x1x1x16xf8E4M3FNUZ>
+      %lhs_thread_0 = tensor.extract_slice %lhs [%i, %c0, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] :  tensor<?x2x2x8x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %lhs_vec_local_0 = vector.transfer_read %lhs_thread_0 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
+      %lhs_thread_1 = tensor.extract_slice %lhs [%i, %c1, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] [1, 1, 1, 1, 2, 8] [1, 1, 1, 1, 1, 1] : tensor<?x2x2x8x64x8xf8E4M3FNUZ> to tensor<1x1x1x1x2x8xf8E4M3FNUZ>
+      %lhs_vec_local_1 = vector.transfer_read %lhs_thread_1 [%c0, %c0, %c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : tensor<1x1x1x1x2x8xf8E4M3FNUZ>, vector<1x1x1x1x2x8xf8E4M3FNUZ>
 
       gpu.barrier
       rocdl.sched.barrier 0
@@ -2121,19 +2097,17 @@ util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?
         indexing_maps = #contraction_accesses,
         iterator_types = [#linalg.iterator_type<parallel>, #linalg.iterator_type<parallel>, #linalg.iterator_type<reduction>],
         kind = #iree_gpu.mma_layout<MFMA_F32_16x16x32_F8E4M3FNUZ>
-      } : vector<4x2x1x8xf8E4M3FNUZ>, vector<4x2x1x8xf8E4M3FNUZ> into vector<4x4x1x4xf32>
+      } : vector<8x1x1x8xf8E4M3FNUZ>, vector<4x1x1x8xf8E4M3FNUZ> into vector<8x4x1x4xf32>
 
       rocdl.s.setprio 0
       gpu.barrier
       rocdl.sched.barrier 0
 
-      vector.transfer_write %rhs_vec_local_0, %rhs_shared[%c0, %glb0_rhs, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-      vector.transfer_write %rhs_vec_local_1, %rhs_shared[%c0, %glb1_rhs, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-      vector.transfer_write %rhs_vec_local_2, %rhs_shared[%c0, %glb2_rhs, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-      vector.transfer_write %rhs_vec_local_3, %rhs_shared[%c0, %glb3_rhs, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-
-      vector.transfer_write %lhs_vec_local_0, %lhs_shared[%c0, %glb0_lhs, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
-      vector.transfer_write %lhs_vec_local_1, %lhs_shared[%c0, %glb1_lhs, %ids#2, %gko] {in_bounds = [true, true, true, true]} : vector<1x1x1x16xf8E4M3FNUZ>, memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      vector.transfer_write %rhs_vec_local_0, %rhs_shared [%c0, %c0, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x2x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      vector.transfer_write %rhs_vec_local_1, %rhs_shared [%c0, %c1, %glb_rhs#0, %glb_rhs#1, %glb_rhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x2x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      
+      vector.transfer_write %lhs_vec_local_0, %lhs_shared [%c0, %c0, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x2x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
+      vector.transfer_write %lhs_vec_local_1, %lhs_shared [%c0, %c1, %glb_lhs#0, %glb_lhs#1, %glb_lhs_inner, %c0] {in_bounds = [true, true, true, true, true, true]} : vector<1x1x1x1x2x8xf8E4M3FNUZ>, memref<1x2x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>
 
       gpu.barrier
       rocdl.sched.barrier 0
@@ -2143,49 +2117,49 @@ util.func private @pingpong_medium_f8_expanded_data_tiling(%lhs_base: tensor<1x?
         indexing_maps = #contraction_accesses,
         iterator_types = [#linalg.iterator_type<parallel>, #linalg.iterator_type<parallel>, #linalg.iterator_type<reduction>],
         kind = #iree_gpu.mma_layout<MFMA_F32_16x16x32_F8E4M3FNUZ>
-      } : vector<4x2x1x8xf8E4M3FNUZ>, vector<4x2x1x8xf8E4M3FNUZ> into vector<4x4x1x4xf32>
+      } : vector<8x1x1x8xf8E4M3FNUZ>, vector<4x1x1x8xf8E4M3FNUZ> into vector<8x4x1x4xf32>
 
       rocdl.s.setprio 0
       gpu.barrier
       rocdl.sched.barrier 0
 
-      scf.yield %dot1 : vector<4x4x1x4xf32>
+      scf.yield %dot1 : vector<8x4x1x4xf32>
     }
     scf.if %cmp1 {
       rocdl.s.barrier
     }
 
     // Epilogue
-    %lhs_vec_0 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x16xf8E4M3FNUZ>
-    %rhs_vec_0 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x16xf8E4M3FNUZ>
-    %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
-    %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
+    %lhs_vec_0 = vector.transfer_read %lhs_shared[%c0, %c0, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x2x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+    %rhs_vec_0 = vector.transfer_read %rhs_shared[%c0, %c0, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x2x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+    %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+    %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
     %dot0 = iree_codegen.inner_tiled ins(%lhs_vec_0_t, %rhs_vec_0_t) outs(%3) {
       indexing_maps = #contraction_accesses,
       iterator_types = [#linalg.iterator_type<parallel>, #linalg.iterator_type<parallel>, #linalg.iterator_type<reduction>],
       kind = #iree_gpu.mma_layout<MFMA_F32_16x16x32_F8E4M3FNUZ>
-    } : vector<4x2x1x8xf8E4M3FNUZ>, vector<4x2x1x8xf8E4M3FNUZ> into vector<4x4x1x4xf32>
+    } : vector<8x1x1x8xf8E4M3FNUZ>, vector<4x1x1x8xf8E4M3FNUZ> into vector<8x4x1x4xf32>
 
-    %lhs_vec_1 = vector.transfer_read %lhs_shared[%c0, %m_outer_id, %ids#2, %c16], %cst {in_bounds = [true, true, true, true]} : memref<1x8x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x16xf8E4M3FNUZ>
-    %rhs_vec_1 = vector.transfer_read %rhs_shared[%c0, %n_outer_id, %ids#2, %c16], %cst {in_bounds = [true, true, true, true]} : memref<1x16x64x32xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x4x1x16xf8E4M3FNUZ>
-    %lhs_vec_1_t = vector.shape_cast %lhs_vec_1 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
-    %rhs_vec_1_t = vector.shape_cast %rhs_vec_1 : vector<1x4x1x16xf8E4M3FNUZ> to vector<4x2x1x8xf8E4M3FNUZ>
+    %lhs_vec_1 = vector.transfer_read %lhs_shared[%c0, %c1, %ids#0, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x2x2x8x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x8x1x8xf8E4M3FNUZ>
+    %rhs_vec_1 = vector.transfer_read %rhs_shared[%c0, %c1, %ids#1, %c0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true, true, true]} : memref<1x2x4x4x64x8xf8E4M3FNUZ, #gpu.address_space<workgroup>>, vector<1x1x1x4x1x8xf8E4M3FNUZ>
+    %lhs_vec_1_t = vector.shape_cast %lhs_vec_1 : vector<1x1x1x8x1x8xf8E4M3FNUZ> to vector<8x1x1x8xf8E4M3FNUZ>
+    %rhs_vec_1_t = vector.shape_cast %rhs_vec_1 : vector<1x1x1x4x1x8xf8E4M3FNUZ> to vector<4x1x1x8xf8E4M3FNUZ>
 
     %dot1 = iree_codegen.inner_tiled ins(%lhs_vec_1_t, %rhs_vec_1_t) outs(%dot0) {
       indexing_maps = #contraction_accesses,
       iterator_types = [#linalg.iterator_type<parallel>, #linalg.iterator_type<parallel>, #linalg.iterator_type<reduction>],
       kind = #iree_gpu.mma_layout<MFMA_F32_16x16x32_F8E4M3FNUZ>
-    } : vector<4x2x1x8xf8E4M3FNUZ>, vector<4x2x1x8xf8E4M3FNUZ> into vector<4x4x1x4xf32>
+    } : vector<8x1x1x8xf8E4M3FNUZ>, vector<4x1x1x8xf8E4M3FNUZ> into vector<8x4x1x4xf32>
 
-    %empty = tensor.empty() : tensor<1x1x1x1x4x4x1x1x4xf32>
-    %cast = vector.shape_cast %dot1 : vector<4x4x1x4xf32> to vector<1x1x1x1x4x4x1x1x4xf32>
-    %4 = vector.transfer_write %cast, %empty[%c0, %c0, %c0, %c0, %c0, %c0, %c0, %c0, %c0] {in_bounds = [true, true, true, true, true, true, true, true, true]} : vector<1x1x1x1x4x4x1x1x4xf32>, tensor<1x1x1x1x4x4x1x1x4xf32>
+    %empty = tensor.empty() : tensor<1x1x1x1x8x4x1x1x4xf32>
+    %cast = vector.shape_cast %dot1 : vector<8x4x1x4xf32> to vector<1x1x1x1x8x4x1x1x4xf32>
+    %4 = vector.transfer_write %cast, %empty[%c0, %c0, %c0, %c0, %c0, %c0, %c0, %c0, %c0] {in_bounds = [true, true, true, true, true, true, true, true, true]} : vector<1x1x1x1x8x4x1x1x4xf32>, tensor<1x1x1x1x8x4x1x1x4xf32>
     scf.forall.in_parallel {
-      tensor.parallel_insert_slice %4 into %out[%c0, %c0, %ids#0, %ids#1, %c0, %c0, %threads#0, %threads#1, %c0] [1, 1, 1, 1, 4, 4, 1, 1, 4] [1, 1, 1, 1, 1, 1, 1, 1, 1] : tensor<1x1x1x1x4x4x1x1x4xf32> into tensor<1x1x2x4x4x4x4x16x4xf32>
+      tensor.parallel_insert_slice %4 into %out[%c0, %c0, %ids#0, %ids#1, %c0, %c0, %threads#0, %threads#1, %c0] [1, 1, 1, 1, 8, 4, 1, 1, 4] [1, 1, 1, 1, 1, 1, 1, 1, 1] : tensor<1x1x1x1x8x4x1x1x4xf32> into tensor<1x1x2x4x8x4x4x16x4xf32>
     }
   } {mapping = [#gpu.thread<linear_dim_0>]}
-  util.return %1 : tensor<1x1x2x4x4x4x4x16x4xf32>
+  util.return %1 : tensor<1x1x2x4x8x4x4x16x4xf32>
 }
 
 /// Entry point for custom lowering strategy for pingpong. Rewrites a matmul
@@ -2707,7 +2681,7 @@ transform.named_sequence @cast_and_call_expanded_data_tiling_f8_large_pingpong_m
 transform.named_sequence @match_emmt_f8_f8_f32_large_data_tiling_impl(%root: !transform.any_op {transform.readonly}) -> !transform.any_op {
   transform.match.operation_name %root ["iree_codegen.inner_tiled"] : !transform.any_op
   %ins, %outs = transform.iree.match.cast_compatible_dag_from_root %root {
-    ^bb0(%lhs: tensor<?x?x2x8x4x4x4x4x8xf8E4M3FNUZ>, %rhs: tensor<?x?x4x4x4x16x4x8xf8E4M3FNUZ>, %empty: tensor<?x?x2x4x8x4x4x16x4xf32>):
+    ^bb0(%lhs: tensor<?x?x2x8x4x4x4x8xf8E4M3FNUZ>, %rhs: tensor<?x?x4x4x4x16x8xf8E4M3FNUZ>, %empty: tensor<?x?x2x4x8x4x4x16x4xf32>):
     %cst = arith.constant 0.0 : f32
     %out = linalg.fill ins(%cst : f32) outs(%empty : tensor<?x?x2x4x8x4x4x16x4xf32>) -> tensor<?x?x2x4x8x4x4x16x4xf32>
     %0 = iree_codegen.inner_tiled ins(%lhs, %rhs) outs(%out)
@@ -2719,9 +2693,8 @@ transform.named_sequence @match_emmt_f8_f8_f32_large_data_tiling_impl(%root: !tr
                               #linalg.iterator_type<reduction>],
             kind = #iree_gpu.data_tiled_mma_layout<intrinsic = MFMA_F32_16x16x32_F8E4M3FNUZ,
                                                    intrinsics_m = 8, subgroups_m = 2,
-                                                   intrinsics_n = 4, subgroups_n = 4,
-                                                   intrinsics_k = 4>
-          } : tensor<?x?x2x8x4x4x4x4x8xf8E4M3FNUZ>, tensor<?x?x4x4x4x16x4x8xf8E4M3FNUZ> into tensor<?x?x2x4x8x4x4x16x4xf32>
+                                                   intrinsics_n = 4, subgroups_n = 4>
+          } : tensor<?x?x2x8x4x4x4x8xf8E4M3FNUZ>, tensor<?x?x4x4x4x16x8xf8E4M3FNUZ> into tensor<?x?x2x4x8x4x4x16x4xf32>
   } : (!transform.any_op) -> (!transform.any_value, !transform.any_value)
   transform.yield %root : !transform.any_op
 }
@@ -2731,6 +2704,11 @@ transform.named_sequence
   -> (!transform.any_op, !transform.any_param) {
   %mmt = transform.include @match_emmt_f8_f8_f32_large_data_tiling_impl failures(propagate) (%matmul)
     : (!transform.any_op) -> !transform.any_op
+  %lhs = transform.get_operand %matmul[0] : (!transform.any_op) -> !transform.any_value
+  %rhs = transform.get_operand %matmul[1] : (!transform.any_op) -> !transform.any_value
+
+  transform.iree.match.dim_is_multiple_of  %rhs[1], 64 : !transform.any_value
+
   // Lowering config for pingpong large. "cast_and_call_expanded_data_tiling_f8_large_pingpong_matmul" refers
   // to the custom lowering strategy to use, which in this case replaces the
   // matmul with a call to the @pingpong_large implementation above.
@@ -3113,9 +3091,9 @@ transform.named_sequence @cast_and_call_expanded_data_tiling_f8_medium_pingpong_
 transform.named_sequence @match_emmt_f8_f8_f32_medium_data_tiling_impl(%root: !transform.any_op {transform.readonly}) -> !transform.any_op {
   transform.match.operation_name %root ["iree_codegen.inner_tiled"] : !transform.any_op
   %ins, %outs = transform.iree.match.cast_compatible_dag_from_root %root {
-    ^bb0(%lhs: tensor<?x?x2x4x4x4x4x4x8xf8E4M3FNUZ>, %rhs: tensor<?x?x4x4x4x16x4x8xf8E4M3FNUZ>, %empty: tensor<?x?x2x4x4x4x4x16x4xf32>):
+    ^bb0(%lhs: tensor<?x?x2x8x4x4x4x8xf8E4M3FNUZ>, %rhs: tensor<?x?x4x4x4x16x8xf8E4M3FNUZ>, %empty: tensor<?x?x2x4x8x4x4x16x4xf32>):
     %cst = arith.constant 0.0 : f32
-    %out = linalg.fill ins(%cst : f32) outs(%empty : tensor<?x?x2x4x4x4x4x16x4xf32>) -> tensor<?x?x2x4x4x4x4x16x4xf32>
+    %out = linalg.fill ins(%cst : f32) outs(%empty : tensor<?x?x2x4x8x4x4x16x4xf32>) -> tensor<?x?x2x4x8x4x4x16x4xf32>
     %0 = iree_codegen.inner_tiled ins(%lhs, %rhs) outs(%out)
            {indexing_maps = [affine_map<(d0, d1, d2) -> (d0, d2)>,
                              affine_map<(d0, d1, d2) -> (d1, d2)>,
@@ -3124,10 +3102,9 @@ transform.named_sequence @match_emmt_f8_f8_f32_medium_data_tiling_impl(%root: !t
                               #linalg.iterator_type<parallel>,
                               #linalg.iterator_type<reduction>],
             kind = #iree_gpu.data_tiled_mma_layout<intrinsic = MFMA_F32_16x16x32_F8E4M3FNUZ,
-                                                   intrinsics_m = 4, subgroups_m = 2,
-                                                   intrinsics_n = 4, subgroups_n = 4,
-                                                   intrinsics_k = 4>
-          } : tensor<?x?x2x4x4x4x4x4x8xf8E4M3FNUZ>, tensor<?x?x4x4x4x16x4x8xf8E4M3FNUZ> into tensor<?x?x2x4x4x4x4x16x4xf32>
+                                                   intrinsics_m = 8, subgroups_m = 2,
+                                                   intrinsics_n = 4, subgroups_n = 4>
+          } : tensor<?x?x2x8x4x4x4x8xf8E4M3FNUZ>, tensor<?x?x4x4x4x16x8xf8E4M3FNUZ> into tensor<?x?x2x4x8x4x4x16x4xf32>
   } : (!transform.any_op) -> (!transform.any_value, !transform.any_value)
   transform.yield %root : !transform.any_op
 }
