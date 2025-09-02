@@ -1255,7 +1255,7 @@ pdl.pattern @annotate_inner_tiled_f16_medium_subgroup_m2_n4_intrinsic_k1_n4 : be
     // Call the C++ "annotateOperation" utility to add the attributes to the matched linalg.generic op.
     // This modifies the operation in-place.
 
-    %annotation = pdl.attribute = #iree_codegen.ukernel_descriptor<"pingpong_dt_medium_f16_subgroup_m2_n4_intrinsics_k1_n4", tensor>
+    %annotation = pdl.attribute = #iree_codegen.ukernel_descriptor<"pingpong_dt_large_f16_subgroup_m2_n4_intrinsics_k1_n4", tensor>
     pdl.apply_native_rewrite "annotateOperation"(%generic_op, %attr_name, %annotation : !pdl.operation, !pdl.attribute, !pdl.attribute)
 
     %config_name = pdl.attribute = "compilation_info"
