@@ -367,6 +367,37 @@ struct SwapInnerBitcastWithExtractSlice
   }
 };
 
+struct ElideFullSliceFeedingCopy
+    : public OpRewritePattern<tensor::ExtractSliceOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::ExtractSliceOp slice,
+                                PatternRewriter &rewriter) const override {
+    // Only trigger when this slice feeds exactly one user and it is
+    // linalg.copy.
+    if (!slice->hasOneUse())
+      return failure();
+    Operation *user = *slice->user_begin();
+    auto copy = dyn_cast<linalg::CopyOp>(user);
+    if (!copy)
+      return failure();
+
+    // Check that the *source* of the copy has rank 2.
+    auto srcType = dyn_cast<RankedTensorType>(slice.getSource().getType());
+    auto dstType = dyn_cast<RankedTensorType>(slice.getType());
+    if (!srcType || !dstType || srcType != dstType || srcType.getRank() != 2)
+      return failure();
+
+    llvm::errs() << "hehehe" << slice << "\n" << copy << "\n";
+    // Replace the slice with the original source as well (cleaner IR if it had
+    // other identical-typed users later due to CSE etc.).
+    Value src = slice.getSource();
+    rewriter.replaceOp(slice, src);
+    llvm::errs() << "haha" << copy << "\n";
+    return success();
+  }
+};
+
 struct PropagateReshapesByExpansionPass final
     : impl::PropagateReshapesByExpansionPassBase<
           PropagateReshapesByExpansionPass> {
@@ -400,6 +431,7 @@ void PropagateReshapesByExpansionPass::runOnOperation() {
         }
         return true;
       };
+  bubbleExpandShapePatterns.add<ElideFullSliceFeedingCopy>(context);
   linalg::populateFoldReshapeOpsByExpansionPatterns(bubbleExpandShapePatterns,
                                                     bubbleUpExpansionControlFn);
   // Add patterns to do some additional cleanup (on top of canonicalizations
