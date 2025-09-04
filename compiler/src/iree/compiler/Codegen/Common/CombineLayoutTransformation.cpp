@@ -56,13 +56,13 @@ static void simplifyComplexRelayoutOps(RewriterBase &rewriter,
       rewriter.replaceOp(result->padOp, result->padOp.getSource());
     }
   }
-  SmallVector<linalg::UnPackOp> unPackOps(
-      funcOp.getFunctionBody().getOps<linalg::UnPackOp>());
-  for (auto unPackOp : unPackOps) {
-    rewriter.setInsertionPoint(unPackOp);
-    (void)linalg::lowerUnPack(rewriter, unPackOp,
-                              /*lowerUnpadLikeWithExtractSlice=*/false);
-  }
+  // SmallVector<linalg::UnPackOp> unPackOps(
+  //     funcOp.getFunctionBody().getOps<linalg::UnPackOp>());
+  // for (auto unPackOp : unPackOps) {
+  //   rewriter.setInsertionPoint(unPackOp);
+  //   (void)linalg::lowerUnPack(rewriter, unPackOp,
+  //                             /*lowerUnpadLikeWithExtractSlice=*/false);
+  // }
   SmallVector<linalg::GenericOp> genericOps(
       funcOp.getFunctionBody().getOps<linalg::GenericOp>());
   for (auto genericOp : genericOps) {
