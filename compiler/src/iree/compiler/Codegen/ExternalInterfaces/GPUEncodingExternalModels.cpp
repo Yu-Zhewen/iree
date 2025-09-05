@@ -226,11 +226,11 @@ chooseDataTiledMMAAttr(TypeRange eTypes, TargetAttr target,
                  static_cast<int>(llvm::divideCeil(
                      narrowDim.size, getNSize(intrinsicMma.getIntrinsic()))));
   }
-  subgroupsM = 2;
-  subgroupsN = 4;
+  subgroupsM = 1;
+  subgroupsN = 8;
   intrinsicsM = 8;
-  intrinsicsN = 4;
-  intrinsicsK = 1;
+  intrinsicsN = 2;
+  intrinsicsK = 2;
   return DataTiledMMAAttr::get(ctx, intrinsicMma.getIntrinsic(), intrinsicsM,
                                subgroupsM, intrinsicsN, subgroupsN,
                                intrinsicsK);
