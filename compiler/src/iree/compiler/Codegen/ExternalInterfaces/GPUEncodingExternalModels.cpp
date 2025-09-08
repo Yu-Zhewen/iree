@@ -230,7 +230,7 @@ chooseDataTiledMMAAttr(TypeRange eTypes, TargetAttr target,
   subgroupsN = 8;
   intrinsicsM = 8;
   intrinsicsN = 2;
-  intrinsicsK = 1;
+  intrinsicsK = 2;
   return DataTiledMMAAttr::get(ctx, intrinsicMma.getIntrinsic(), intrinsicsM,
                                subgroupsM, intrinsicsN, subgroupsN,
                                intrinsicsK);
