@@ -1579,9 +1579,9 @@ pdl.pattern @annotate_inner_tiled_f8_large_subgroup_m2_n4_intrinsic_k1_n4 : bene
   pdl.apply_native_constraint "matchCastCompatibleType"(%rhs, %rhs_cast_type : !pdl.value, !pdl.type)
 
   %empty = pdl.attribute = {}
-  %c1 = pdl.attribute = 1
-  %c64 = pdl.attribute = 64
-  pdl.apply_native_constraint "dimIsBound"(%rhs, %c1, %c64, %empty : !pdl.value, !pdl.attribute, !pdl.attribute, !pdl.attribute)
+  %c0 = pdl.attribute = 0
+  %c8 = pdl.attribute = 8
+  pdl.apply_native_constraint "dimIsBound"(%rhs, %c0, %c8, %empty : !pdl.value, !pdl.attribute, !pdl.attribute, !pdl.attribute)
 
   pdl.rewrite {
     // Call the C++ "annotateOperation" utility to add the attributes to the matched linalg.generic op.
