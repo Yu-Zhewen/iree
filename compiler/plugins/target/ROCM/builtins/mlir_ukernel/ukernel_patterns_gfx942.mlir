@@ -1682,7 +1682,7 @@ pdl.pattern @annotate_inner_tiled_f8_medium_subgroup_m1_n8_intrinsic_m16_n2_k1 :
   }
 }
 
-pdl.pattern @annotate_inner_tiled_f8_large_subgroup_m2_n4_intrinsic_k1_n4 : benefit(2) {
+pdl.pattern @annotate_inner_tiled_f8_large_subgroup_m2_n4_intrinsic_k1_n4 : benefit(20) {
   %elemtypes = pdl.attribute = [f8E4M3FNUZ, f8E4M3FNUZ, f32]
   %imaps = pdl.attribute = [
     affine_map<(d0, d1, d2) -> (d0, d2)>,
