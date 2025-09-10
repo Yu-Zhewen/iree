@@ -575,6 +575,20 @@ def IREECodegen_UKernelProviderInterface :
         return failure();
       }]
     >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Returns a data layout attribute for the provided |encoding| and
+        |target_configuration|.
+      }],
+      /*retTy=*/"::mlir::Attribute",
+      /*methodName=*/"getDataLayoutForUKernel",
+      /*args=*/(ins "::mlir::Attribute":$encoding,
+                    "::mlir::DictionaryAttr":$target_configuration),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{
+        return {};
+      }]
+    >,
   ];
 }
 
