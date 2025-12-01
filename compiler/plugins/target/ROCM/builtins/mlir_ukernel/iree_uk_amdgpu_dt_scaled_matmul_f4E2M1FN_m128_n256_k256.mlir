@@ -46,8 +46,8 @@
 !lhs_scale_buffer_collapse_ty = memref<?x1024xi8, strided<[?, 1], offset: ?>, #amdgpu.address_space<fat_raw_buffer>>
 !rhs_scale_buffer_collapse_ty = memref<?x2048xi8, strided<[?, 1], offset: ?>, #amdgpu.address_space<fat_raw_buffer>>
 
-!lhs_scale_copy_vec_ty = vector<4xi8>
-!rhs_scale_copy_vec_ty = vector<4xi8>
+!lhs_scale_copy_vec_ty = vector<16xi8>
+!rhs_scale_copy_vec_ty = vector<16xi8>
 
 // 2 = double buffer
 // 64 = m tile
@@ -188,23 +188,19 @@ util.func @dt_scaled_matmul_f4f4f32_m128_n256_k256(
             : !rhs_copy_vec_ty, !rhs_buffer_collapse_ty, !rhs_shared_ty
         }
 
-        scf.for %j = %c0 to %c2 step %c1 {
-          %rhs_scale_buffer_unroll = arith.muli %j, %c1024 : index
-          %rhs_scale_buffer_thread = arith.muli %id, %c4 : index
-          %rhs_scale_buffer_inner = arith.addi %rhs_scale_buffer_unroll, %rhs_scale_buffer_thread : index
+        %rhs_scale_buffer_subgroup = arith.muli %subgroups#1, %c1024 : index
+        %rhs_scale_buffer_thread = arith.muli %ids#1, %c16 : index
+        %rhs_scale_buffer_inner = arith.addi %rhs_scale_buffer_subgroup, %rhs_scale_buffer_thread : index
 
-          %rhs_scale_shared_num = arith.muli %buffer_num, %c2 : index
-          %rhs_scale_shared_outer = arith.addi %rhs_scale_shared_num, %j : index
-          %rhs_scale_shared_subgroup = arith.muli %ids#0, %c256 : index
-          %rhs_scale_shared_thread = arith.muli %ids#1, %c4 : index
-          %rhs_scale_shared_inner = arith.addi %rhs_scale_shared_subgroup, %rhs_scale_shared_thread : index
+        %rhs_scale_shared_num = arith.muli %buffer_num, %c2 : index
+        %rhs_scale_shared_outer = arith.addi %rhs_scale_shared_num, %subgroups#1 : index
+        %rhs_scale_shared_inner = arith.muli %ids#1, %c16 : index
 
-          amdgpu.gather_to_lds %rhs_scale_collapse[%i, %rhs_scale_buffer_inner], %rhs_scale_shared[%rhs_scale_shared_outer, %rhs_scale_shared_inner]
-            : !rhs_scale_copy_vec_ty, !rhs_scale_buffer_collapse_ty, !rhs_scale_shared_ty
-        }
+        amdgpu.gather_to_lds %rhs_scale_collapse[%i, %rhs_scale_buffer_inner], %rhs_scale_shared[%rhs_scale_shared_outer, %rhs_scale_shared_inner]
+          : !rhs_scale_copy_vec_ty, !rhs_scale_buffer_collapse_ty, !rhs_scale_shared_ty
 
         // Wait on previous group.
-        rocdl.s.waitcnt 10
+        rocdl.s.waitcnt 9
         rocdl.s.barrier
 
         // Copy inputs.
@@ -223,13 +219,12 @@ util.func @dt_scaled_matmul_f4f4f32_m128_n256_k256(
             : !lhs_copy_vec_ty, !lhs_buffer_collapse_ty, !lhs_shared_ty
         }
 
-        %lhs_scale_buffer_inner = arith.muli %id, %c4 : index
+        %lhs_scale_buffer_inner = arith.muli %ids#1, %c16 : index
 
         %lhs_scale_shared_num = arith.muli %buffer_num, %c2 : index
-        %lhs_scale_shared_outer = arith.addi %lhs_scale_shared_num, %subgroups#0 : index
-        %lhs_scale_shared_subgroup = arith.muli %subgroups#1, %c256 : index
-        %lhs_scale_shared_thread = arith.muli %ids#1, %c4 : index
-        %lhs_scale_shared_inner = arith.addi %lhs_scale_shared_subgroup, %lhs_scale_shared_thread : index
+        %lhs_scale_shared_outer = arith.addi %lhs_scale_shared_num, %threads#0 : index
+        %lhs_scale_shared_inner = arith.muli %threads#1, %c16 : index
+
         amdgpu.gather_to_lds %lhs_scale_collapse[%i, %lhs_scale_buffer_inner], %lhs_scale_shared[%lhs_scale_shared_outer, %lhs_scale_shared_inner]
           : !lhs_scale_copy_vec_ty, !lhs_scale_buffer_collapse_ty, !lhs_scale_shared_ty
 
