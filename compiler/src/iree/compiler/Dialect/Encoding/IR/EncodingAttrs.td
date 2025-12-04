@@ -330,6 +330,7 @@ def TestingAttr :
       DeclareAttrInterfaceMethods<IREEEncoding_SerializableAttr, [
         "isSerialized",
         "cloneWithLayouts",
+        "convertForBitcast",
       ]>
     ]> {
   let mnemonic = "testing";
@@ -342,7 +343,8 @@ def TestingAttr :
 
   let parameters = (ins
     OptionalParameter<"ArrayAttr", "An array of attributes that describes the "
-    "layouts.">:$layouts
+    "layouts.">:$layouts,
+    OptionalParameter<"Type", "The underlying data type">:$underlying_type
   );
 
   let assemblyFormat = "`<` struct(params) `>`";
