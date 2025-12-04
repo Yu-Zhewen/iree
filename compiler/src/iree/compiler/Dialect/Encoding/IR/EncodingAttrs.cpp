@@ -690,7 +690,17 @@ bool TestingAttr::isSerialized() const { return getLayouts() ? true : false; }
 
 Attribute TestingAttr::cloneWithLayouts(ArrayRef<Attribute> layouts) const {
   MLIRContext *ctx = getContext();
-  return TestingAttr::get(ctx, ArrayAttr::get(ctx, layouts));
+  return TestingAttr::get(ctx, ArrayAttr::get(ctx, layouts),
+                          getUnderlyingType());
+}
+
+Attribute TestingAttr::convertForBitcast(Type type) const {
+  auto tensorType = dyn_cast<RankedTensorType>(type);
+  if (!tensorType) {
+    return {};
+  }
+  return TestingAttr::get(tensorType.getContext(), getLayouts(),
+                          tensorType.getElementType());
 }
 
 Attribute
