@@ -63,37 +63,66 @@ struct HoistableTensorTypeInterface
         (llvm::isPowerOf2_32(elementBitWidth) && elementBitWidth >= 8)) {
       return type;
     }
-    int64_t numElements = ShapedType::getNumElements(tensorType.getShape());
-    // Bail out if the data can't be aligned on bytes.
-    if (numElements * elementBitWidth % 8 != 0) {
+    // int64_t numElements = ShapedType::getNumElements(tensorType.getShape());
+    // // Bail out if the data can't be aligned on bytes.
+    // if (numElements * elementBitWidth % 8 != 0) {
+    //   return type;
+    // }
+    // // TODO(jtuyls): We might need to account for the preferred storage type in
+    // // the encoding itself as well to avoid different materializations of the
+    // // same encoding on different types?
+    // return RankedTensorType::get({numElements * elementBitWidth / 8},
+    //   Builder(type.getContext()).getIntegerType(8));
+    // // tensorType.getEncoding());
+
+    ArrayRef<int64_t> shape = tensorType.getShape();
+    if (shape.empty()) {
       return type;
     }
+
+    // Check if the last dimension can be packed into bytes.
+    // The last dimension * elementBitWidth must be a multiple of 8.
+    int64_t lastDim = shape.back();
+    if (lastDim * elementBitWidth % 8 != 0) {
+      return type;
+    }
+
+    // Compute the new last dimension size in bytes.
+    int64_t newLastDim = lastDim * elementBitWidth / 8;
+
+    // Build the new shape: keep all dimensions except the last, then append
+    // the packed last dimension.
+    SmallVector<int64_t> newShape(shape.drop_back());
+    newShape.push_back(newLastDim);
+
     // TODO(jtuyls): We might need to account for the preferred storage type in
     // the encoding itself as well to avoid different materializations of the
     // same encoding on different types?
-    return RankedTensorType::get({numElements * elementBitWidth / 8},
-      Builder(type.getContext()).getIntegerType(8),
-      tensorType.getEncoding());
-    // IREE::Encoding::SerializableAttr attr =
-    //     IREE::Encoding::getSerializableAttr(tensorType);
-    // if (!attr) {
-    //   return RankedTensorType::get({numElements * elementBitWidth / 8},
-    //     Builder(type.getContext()).getIntegerType(8));
-    // }
-    LLVM_DEBUG(llvm::dbgs() << "convertEncodingForBitcast: "
-                            << tensorType.getEncoding() << "\n");
-    auto serializableAttr = dyn_cast_or_null<IREE::Encoding::SerializableAttr>(
-        tensorType.getEncoding());
-    if (!serializableAttr) {
-      return RankedTensorType::get(
-          {numElements * elementBitWidth / 8},
-          Builder(type.getContext()).getIntegerType(8));
-    }
-    Attribute newSerializableAttr =
-        serializableAttr.convertForBitcast(tensorType);
-    return RankedTensorType::get({numElements * elementBitWidth / 8},
+    return RankedTensorType::get(newShape,
                                  Builder(type.getContext()).getIntegerType(8),
-                                 newSerializableAttr);
+                                 tensorType.getEncoding());
+
+    // // tensorType.getEncoding());
+    // // IREE::Encoding::SerializableAttr attr =
+    // //     IREE::Encoding::getSerializableAttr(tensorType);
+    // // if (!attr) {
+    // //   return RankedTensorType::get({numElements * elementBitWidth / 8},
+    // //     Builder(type.getContext()).getIntegerType(8));
+    // // }
+    // LLVM_DEBUG(llvm::dbgs() << "convertEncodingForBitcast: "
+    //                         << tensorType.getEncoding() << "\n");
+    // auto serializableAttr = dyn_cast_or_null<IREE::Encoding::SerializableAttr>(
+    //     tensorType.getEncoding());
+    // if (!serializableAttr) {
+    //   return RankedTensorType::get(
+    //       {numElements * elementBitWidth / 8},
+    //       Builder(type.getContext()).getIntegerType(8));
+    // }
+    // Attribute newSerializableAttr =
+    //     serializableAttr.convertForBitcast(tensorType);
+    // return RankedTensorType::get({numElements * elementBitWidth / 8},
+    //                              Builder(type.getContext()).getIntegerType(8),
+    //                              newSerializableAttr);
   }
 
   static Value encodeStorageType(OpBuilder &builder, Location loc,

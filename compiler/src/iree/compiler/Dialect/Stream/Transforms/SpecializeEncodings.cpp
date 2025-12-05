@@ -349,6 +349,7 @@ static LogicalResult
 updateTensorSizeOfOp(RewriterBase &rewriter,
                      IREE::Stream::TensorSizeOfOp sizeOfOp,
                      const SetVector<Attribute> &layoutResolvers) {
+  LLVM_DEBUG(llvm::dbgs() << "updateTensorSizeOfOp: " << sizeOfOp << "\n");
   auto encodingType = dyn_cast<RankedTensorType>(sizeOfOp.getEncoding());
   Type newEncodingType =
       getTypeWithResolvedEncodingLayouts(encodingType, layoutResolvers);
