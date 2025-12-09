@@ -13,13 +13,13 @@
 #include "iree/compiler/Dialect/Encoding/IR/EncodingTypes.h"
 #include "iree/compiler/Dialect/Encoding/Utils/Utils.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/MLIRContext.h"
-#include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "iree-codegen-external-interfaces"
 
