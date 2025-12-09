@@ -68,7 +68,8 @@ struct HoistableTensorTypeInterface
     // if (numElements * elementBitWidth % 8 != 0) {
     //   return type;
     // }
-    // // TODO(jtuyls): We might need to account for the preferred storage type in
+    // // TODO(jtuyls): We might need to account for the preferred storage type
+    // in
     // // the encoding itself as well to avoid different materializations of the
     // // same encoding on different types?
     // return RankedTensorType::get({numElements * elementBitWidth / 8},
@@ -111,7 +112,8 @@ struct HoistableTensorTypeInterface
     // // }
     // LLVM_DEBUG(llvm::dbgs() << "convertEncodingForBitcast: "
     //                         << tensorType.getEncoding() << "\n");
-    // auto serializableAttr = dyn_cast_or_null<IREE::Encoding::SerializableAttr>(
+    // auto serializableAttr =
+    // dyn_cast_or_null<IREE::Encoding::SerializableAttr>(
     //     tensorType.getEncoding());
     // if (!serializableAttr) {
     //   return RankedTensorType::get(
