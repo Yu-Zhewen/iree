@@ -1307,10 +1307,18 @@ pdl.pattern @annotate_dt_scaled_matmul_like_f4E2M1FN_m128_n256_k256 : benefit(2)
   pdl.apply_native_constraint "matchCastCompatibleType"(%lhs, %lhs_cast_type : !pdl.value, !pdl.type)
   %rhs_cast_type = pdl.type : tensor<?x?x1x2x8x2x4x16x32xf4E2M1FN>
   pdl.apply_native_constraint "matchCastCompatibleType"(%rhs, %rhs_cast_type : !pdl.value, !pdl.type)
-      %lhs_scale_cast_type = pdl.type : tensor<?x?x2x4x16x4x2xf8E8M0FNU>
-      pdl.apply_native_constraint "matchCastCompatibleType"(%lhs_scale, %lhs_scale_cast_type : !pdl.value, !pdl.type)
-      %rhs_scale_cast_type = pdl.type : tensor<?x?x2x4x16x8x2xf8E8M0FNU>
-      pdl.apply_native_constraint "matchCastCompatibleType"(%rhs_scale, %rhs_scale_cast_type : !pdl.value, !pdl.type)
+  %lhs_scale_cast_type = pdl.type : tensor<?x?x2x4x16x4x2xf8E8M0FNU>
+  pdl.apply_native_constraint "matchCastCompatibleType"(%lhs_scale, %lhs_scale_cast_type : !pdl.value, !pdl.type)
+  %rhs_scale_cast_type = pdl.type : tensor<?x?x2x4x16x8x2xf8E8M0FNU>
+  pdl.apply_native_constraint "matchCastCompatibleType"(%rhs_scale, %rhs_scale_cast_type : !pdl.value, !pdl.type)
+
+  // Match the specialization range: 1024 <= M <= 16384.
+  // The M dimension (dim 0) of lhs must have between 8 and 128 tiles.
+  // With a tile size of 128: 8 * 128 = 1024, 128 * 128 = 16384.
+  %c0 = pdl.attribute = 0
+  %c8 = pdl.attribute = 8
+  %c128 = pdl.attribute = 128
+  pdl.apply_native_constraint "dimIsBound"(%out_init, %c0, %c8, %c128 : !pdl.value, !pdl.attribute, !pdl.attribute, !pdl.attribute)
 
   pdl.rewrite {
     // Call the C++ "annotateOperation" utility to add the attributes to the matched linalg.generic op.
@@ -1367,10 +1375,10 @@ pdl.pattern @annotate_dt_scaled_matmul_like_f4E2M1FN_m256_n256_k128 : benefit(1)
   pdl.apply_native_constraint "matchCastCompatibleType"(%lhs, %lhs_cast_type : !pdl.value, !pdl.type)
   %rhs_cast_type = pdl.type : tensor<?x?x1x2x8x4x16x32xf4E2M1FN>
   pdl.apply_native_constraint "matchCastCompatibleType"(%rhs, %rhs_cast_type : !pdl.value, !pdl.type)
-      %lhs_scale_cast_type = pdl.type : tensor<?x?x2x8x4x16xf8E8M0FNU>
-      pdl.apply_native_constraint "matchCastCompatibleType"(%lhs_scale, %lhs_scale_cast_type : !pdl.value, !pdl.type)
-      %rhs_scale_cast_type = pdl.type : tensor<?x?x2x8x4x16xf8E8M0FNU>
-      pdl.apply_native_constraint "matchCastCompatibleType"(%rhs_scale, %rhs_scale_cast_type : !pdl.value, !pdl.type)
+  %lhs_scale_cast_type = pdl.type : tensor<?x?x2x8x4x16xf8E8M0FNU>
+  pdl.apply_native_constraint "matchCastCompatibleType"(%lhs_scale, %lhs_scale_cast_type : !pdl.value, !pdl.type)
+  %rhs_scale_cast_type = pdl.type : tensor<?x?x2x8x4x16xf8E8M0FNU>
+  pdl.apply_native_constraint "matchCastCompatibleType"(%rhs_scale, %rhs_scale_cast_type : !pdl.value, !pdl.type)
 
   pdl.rewrite {
     // Call the C++ "annotateOperation" utility to add the attributes to the matched linalg.generic op.
@@ -1427,10 +1435,10 @@ pdl.pattern @annotate_dt_scaled_matmul_like_f4E2M1FN_m256_n256_k256 : benefit(1)
   pdl.apply_native_constraint "matchCastCompatibleType"(%lhs, %lhs_cast_type : !pdl.value, !pdl.type)
   %rhs_cast_type = pdl.type : tensor<?x?x1x2x8x2x4x16x32xf4E2M1FN>
   pdl.apply_native_constraint "matchCastCompatibleType"(%rhs, %rhs_cast_type : !pdl.value, !pdl.type)
-      %lhs_scale_cast_type = pdl.type : tensor<?x?x2x8x4x16x2xf8E8M0FNU>
-      pdl.apply_native_constraint "matchCastCompatibleType"(%lhs_scale, %lhs_scale_cast_type : !pdl.value, !pdl.type)
-      %rhs_scale_cast_type = pdl.type : tensor<?x?x2x8x4x16x2xf8E8M0FNU>
-      pdl.apply_native_constraint "matchCastCompatibleType"(%rhs_scale, %rhs_scale_cast_type : !pdl.value, !pdl.type)
+  %lhs_scale_cast_type = pdl.type : tensor<?x?x2x8x4x16x2xf8E8M0FNU>
+  pdl.apply_native_constraint "matchCastCompatibleType"(%lhs_scale, %lhs_scale_cast_type : !pdl.value, !pdl.type)
+  %rhs_scale_cast_type = pdl.type : tensor<?x?x2x8x4x16x2xf8E8M0FNU>
+  pdl.apply_native_constraint "matchCastCompatibleType"(%rhs_scale, %rhs_scale_cast_type : !pdl.value, !pdl.type)
 
   pdl.rewrite {
     // Call the C++ "annotateOperation" utility to add the attributes to the matched linalg.generic op.
