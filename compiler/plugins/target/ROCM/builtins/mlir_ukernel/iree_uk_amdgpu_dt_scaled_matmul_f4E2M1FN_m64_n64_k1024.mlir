@@ -105,6 +105,7 @@ util.func @dt_scaled_matmul_f4f4f32_m64_n64_k1024(
     %unused_acc: !return_ty) -> !return_ty attributes {
   ukernel_info = #rocm.ukernel_info<
     match = {
+      archs = ["gfx950"],
       types = [f4E2M1FN, f4E2M1FN, f8E8M0FNU, f8E8M0FNU, f32]
     },
     mma = #iree_gpu.data_tiled_scaled_mma_layout<
