@@ -117,7 +117,7 @@ chooseDataTiledMMAAttr(TypeRange eTypes, TargetAttr target,
   DictionaryAttr config = resolver.getConfiguration();
   if (IREE::Codegen::UKernelProviderInterface provider =
           getUKernelProviderFromTarget(config)) {
-    auto mma = dyn_cast_if_present<IREE::GPU::DataTiledMMAInterfaceAttr>(
+    auto mma = dyn_cast_if_present<IREE::GPU::DataTiledMMAAttr>(
         provider.getDataLayoutForUKernel(encoding, config));
     if (mma) {
       return mma;

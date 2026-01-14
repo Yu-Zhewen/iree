@@ -23,9 +23,7 @@ def ROCM_Dialect : Dialect {
     for AMD targets that lower to LLVM.
   }];
   let useDefaultAttributePrinterParser = 1;
-  let dependentDialects = ["::mlir::bufferization::BufferizationDialect",
-                           "::mlir::iree_compiler::IREE::TensorExt::IREETensorExtDialect",
-                           "::mlir::iree_compiler::IREE::Util::UtilDialect",
+  let dependentDialects = ["::mlir::iree_compiler::IREE::Util::UtilDialect",
                            "::mlir::gpu::GPUDialect",
                            "mlir::ROCDL::ROCDLDialect"];
 

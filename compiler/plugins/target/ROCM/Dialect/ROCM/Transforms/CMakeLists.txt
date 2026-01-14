@@ -31,7 +31,6 @@ iree_cc_library(
   DEPS
     ::PassesIncGen
     LLVMSupport
-    MLIRAMDGPUDialect
     MLIRIR
     MLIRLinalgDialect
     MLIRPDLDialect
@@ -46,7 +45,6 @@ iree_cc_library(
     iree::compiler::Codegen::Dialect::GPU::IR::IREEGPUDialect
     iree::compiler::Codegen::Utils
     iree::compiler::Dialect::HAL::IR
-    iree::compiler::Dialect::LinalgExt::Utils
     iree::compiler::Dialect::Util::IR
     iree::compiler::Utils
     iree::compiler::plugins::target::ROCM::Dialect::ROCM::IR::ROCMDialect
