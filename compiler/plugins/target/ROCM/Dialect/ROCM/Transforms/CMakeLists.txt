@@ -31,12 +31,14 @@ iree_cc_library(
   DEPS
     ::PassesIncGen
     LLVMSupport
+    MLIRAMDGPUDialect
     MLIRIR
     MLIRLinalgDialect
     MLIRPDLDialect
     MLIRPDLInterpDialect
     MLIRParser
     MLIRPass
+    MLIRROCDLDialect
     MLIRTransformUtils
     MLIRValueBoundsOpInterface
     iree::compiler::Codegen::Common
