@@ -9,6 +9,7 @@
 #include "iree/compiler/Dialect/Flow/IR/FlowOps.h"
 #include "iree/compiler/Dialect/Flow/Transforms/RegionOpUtils.h"
 #include "iree/compiler/Dialect/LinalgExt/IR/LinalgExtOps.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtOps.h"
 #include "iree/compiler/DispatchCreation/FusionUtils.h"
 #include "iree/compiler/DispatchCreation/Passes.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -52,7 +53,8 @@ static bool isFusableWithSetEncoding(Operation *target) {
     if (!isa<tensor::CollapseShapeOp, tensor::ExpandShapeOp, tensor::EmptyOp,
              tensor::ExtractSliceOp, IREE::Encoding::SetEncodingOp,
              IREE::Encoding::UnsetEncodingOp, linalg::LinalgOp,
-             IREE::LinalgExt::AttentionOp, IREE::LinalgExt::GatherOp>(op)) {
+             IREE::LinalgExt::AttentionOp, IREE::LinalgExt::GatherOp,
+             IREE::TensorExt::BitCastOp>(op)) {
       return false;
     }
   }

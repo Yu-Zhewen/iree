@@ -389,3 +389,64 @@ util.func public @multi_use_producer_fusion(%arg0: tensor<2x11008x128xf32>) -> (
 // MULTI-USE:       }
 // MULTI-USE-NOT:   iree_encoding.set_encoding
 // MULTI-USE:       util.return %[[DISPATCH]]#0, %[[DISPATCH]]#1 : tensor<2x11008x128xf32>, tensor<2x11008x128xf32, #[[$ENCODING]]>
+
+// -----
+
+// Tests fusion through bitcast + reshape chain with multi-use intermediate values.
+// Pattern derived from llama 70B/405B (github.com/iree-org/iree/issues/23092).
+// Includes tensor.cast ops which block fusion (tensor.cast not in allowed ops).
+// TODO: Add canonicalization patterns to fold these tensor.cast ops.
+#map = affine_map<(d0, d1) -> (d0, d1)>
+#encoding0 = #iree_encoding.testing<layouts = [#iree_encoding.specialized<0>]>
+#encoding1 = #iree_encoding.testing<layouts = [#iree_encoding.specialized<1>]>
+util.func public @bitcast_reshape_multi_use_fusion(%arg0: tensor<?x32xf4E2M1FN>, %d0: index) -> (tensor<?x256x32xf4E2M1FN, #encoding0>, tensor<?x256x32xf4E2M1FN, #encoding1>) {
+  %0 = tensor.empty(%d0) : tensor<?x32xf4E2M1FN>
+  %1 = flow.dispatch.region -> (tensor<?x32xf4E2M1FN>{%d0}) {
+    %10 = linalg.generic {
+        indexing_maps = [#map, #map],
+        iterator_types = ["parallel", "parallel"]}
+        ins(%arg0 : tensor<?x32xf4E2M1FN>)
+        outs(%0 : tensor<?x32xf4E2M1FN>) {
+    ^bb0(%in: f4E2M1FN, %out: f4E2M1FN):
+      linalg.yield %in : f4E2M1FN
+    } -> tensor<?x32xf4E2M1FN>
+    flow.return %10 : tensor<?x32xf4E2M1FN>
+  }
+  %2 = iree_tensor_ext.bitcast %1 : tensor<?x32xf4E2M1FN>{%d0} -> tensor<?x16xi8>{%d0}
+  %c4 = arith.constant 4 : index
+  %d1 = arith.divui %d0, %c4 : index
+  %expanded0 = tensor.expand_shape %2 [[0, 1, 2], [3]] output_shape [4, %d1, 256, 16] : tensor<?x16xi8> into tensor<4x?x256x16xi8>
+  %collapsed0 = tensor.collapse_shape %expanded0 [[0], [1], [2, 3]] : tensor<4x?x256x16xi8> into tensor<4x?x4096xi8>
+  %3 = iree_tensor_ext.bitcast %collapsed0 : tensor<4x?x4096xi8>{%d1} -> tensor<4x?x8192xf4E2M1FN>{%d1}
+  %expanded1 = tensor.expand_shape %3 [[0], [1], [2, 3]] output_shape [4, %d1, 256, 32] : tensor<4x?x8192xf4E2M1FN> into tensor<4x?x256x32xf4E2M1FN>
+  // Multi-use: same source feeds two collapse_shape ops (like %cast_15 in the issue)
+  %collapsed1 = tensor.collapse_shape %expanded1 [[0, 1], [2], [3]] : tensor<4x?x256x32xf4E2M1FN> into tensor<?x256x32xf4E2M1FN>
+  %collapsed2 = tensor.collapse_shape %expanded1 [[0, 1], [2], [3]] : tensor<4x?x256x32xf4E2M1FN> into tensor<?x256x32xf4E2M1FN>
+  %4 = iree_encoding.set_encoding %collapsed1 : tensor<?x256x32xf4E2M1FN> -> tensor<?x256x32xf4E2M1FN, #encoding0>
+  %5 = iree_encoding.set_encoding %collapsed2 : tensor<?x256x32xf4E2M1FN> -> tensor<?x256x32xf4E2M1FN, #encoding1>
+  util.return %4, %5 : tensor<?x256x32xf4E2M1FN, #encoding0>, tensor<?x256x32xf4E2M1FN, #encoding1>
+}
+// tensor.cast blocks fusion - set_encoding stays outside dispatch in both modes
+// CHECK-DAG:       #[[$ENCODING0:.+]] = #iree_encoding.testing<layouts = [#iree_encoding.specialized<0>]>
+// CHECK-DAG:       #[[$ENCODING1:.+]] = #iree_encoding.testing<layouts = [#iree_encoding.specialized<1>]>
+// CHECK-LABEL:     @bitcast_reshape_multi_use_fusion
+// CHECK:           %[[DISPATCH:.+]] = flow.dispatch.region -> (tensor<?x32xf4E2M1FN>
+// CHECK:             linalg.generic
+// CHECK:             flow.return
+// CHECK:           }
+// CHECK:           iree_tensor_ext.bitcast %[[DISPATCH]]
+// CHECK:           tensor.cast
+// CHECK:           tensor.cast
+// CHECK-COUNT-2:   iree_encoding.set_encoding
+
+// MULTI-USE-DAG:   #[[$ENCODING0:.+]] = #iree_encoding.testing<layouts = [#iree_encoding.specialized<0>]>
+// MULTI-USE-DAG:   #[[$ENCODING1:.+]] = #iree_encoding.testing<layouts = [#iree_encoding.specialized<1>]>
+// MULTI-USE-LABEL: @bitcast_reshape_multi_use_fusion
+// MULTI-USE:       %[[DISPATCH:.+]] = flow.dispatch.region -> (tensor<?x32xf4E2M1FN>
+// MULTI-USE:         linalg.generic
+// MULTI-USE:         flow.return
+// MULTI-USE:       }
+// MULTI-USE:       iree_tensor_ext.bitcast %[[DISPATCH]]
+// MULTI-USE:       tensor.cast
+// MULTI-USE:       tensor.cast
+// MULTI-USE-COUNT-2: iree_encoding.set_encoding
