@@ -11,6 +11,7 @@
 #include "compiler/src/iree/compiler/Dialect/Flow/Transforms/RegionOpUtils.h"
 #include "iree/compiler/Dialect/Flow/IR/FlowOps.h"
 #include "iree/compiler/Dialect/LinalgExt/Utils/Utils.h"
+#include "iree/compiler/Dialect/TensorExt/IR/TensorExtOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 
@@ -140,14 +141,19 @@ getProducerDispatchValueAndOpChain(Value operand, bool enableAggressiveFusion) {
   auto producerValue = dyn_cast<OpResult>(operand);
   while (producerValue &&
          !isa<IREE::Flow::DispatchRegionOp>(producerValue.getOwner())) {
-    if (!llvm::hasSingleElement(producerValue.getUses())) {
+    if (!enableAggressiveFusion &&
+        !llvm::hasSingleElement(producerValue.getUses())) {
       return std::nullopt;
     }
 
     // If it is an operation that we want to look past, add it to the chain
     // and update the `producerValue`.
+    // Note: tensor::CastOp is NOT included here because it is not in the
+    // allowed ops list for dispatch region fusion (it causes reification
+    // errors when it erases static dimension information).
     Operation *currOperation = producerValue.getOwner();
-    if (isa<tensor::CollapseShapeOp, tensor::ExpandShapeOp>(currOperation)) {
+    if (isa<tensor::CollapseShapeOp, tensor::ExpandShapeOp,
+            IREE::TensorExt::BitCastOp>(currOperation)) {
       opChain.push_back(currOperation);
       producerValue = dyn_cast<OpResult>(currOperation->getOperand(0));
       continue;

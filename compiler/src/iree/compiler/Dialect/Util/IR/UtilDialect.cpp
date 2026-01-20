@@ -166,8 +166,9 @@ struct FoldDimOp : public OpRewritePattern<DimOp> {
       auto sourceType = dyn_cast<ShapedType>(viewSource.getType());
       auto resultType = dyn_cast<ShapedType>(source.getType());
       if (!sourceType || !resultType ||
-          sourceType.getShape() != resultType.getShape())
+          sourceType.getShape() != resultType.getShape()) {
         break;
+      }
       source = viewSource;
     }
     auto shapeAwareOp =
