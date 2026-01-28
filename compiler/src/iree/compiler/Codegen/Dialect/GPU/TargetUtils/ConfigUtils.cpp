@@ -1099,8 +1099,7 @@ setIGEMMConvolutionLoweringConfig(IREE::GPU::TargetAttr target,
   SmallVector<NamedAttribute, 1> pipelineAttrs;
   auto pipelineOptions = IREE::GPU::GPUPipelineOptionsAttr::get(
       linalgOp->getContext(), /*prefetchNumStages=*/2,
-      /*no_reduce_shared_memory_bank_conflicts=*/
-      targetSupportsGlobalLoadDMA(target),
+      /*no_reduce_shared_memory_bank_conflicts=*/false,
       /*use_igemm_convolution=*/true,
       /*reorder_workgroups_strategy=*/std::nullopt);
   pipelineAttrs.emplace_back(
@@ -1168,8 +1167,7 @@ LogicalResult setMatmulLoweringConfig(IREE::GPU::TargetAttr target,
   SmallVector<NamedAttribute, 1> pipelineAttrs;
   auto pipelineOptions = IREE::GPU::GPUPipelineOptionsAttr::get(
       linalgOp->getContext(), /*prefetchNumStages=*/2,
-      /*no_reduce_shared_memory_bank_conflicts=*/
-      targetSupportsGlobalLoadDMA(target),
+      /*no_reduce_shared_memory_bank_conflicts=*/false,
       /*use_igemm_convolution=*/false,
       /*reorder_workgroups_strategy=*/std::nullopt);
   pipelineAttrs.emplace_back(
