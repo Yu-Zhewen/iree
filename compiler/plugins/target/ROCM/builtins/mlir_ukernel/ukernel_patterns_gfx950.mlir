@@ -820,7 +820,7 @@ pdl.pattern @annotate_inner_tiled_f8E4M3FN_medium : benefit(1) {
     pdl.apply_native_rewrite "annotateOperation"(%generic_op, %config_name, %config : !pdl.operation, !pdl.attribute, !pdl.attribute)
 
     %builtin_attr = pdl.attribute = "rocm.builtin_name"
-    %builtin_annotation = pdl.attribute = "iree_uk_amdgpu_dt_matmul_f8E4M3FN.mlir"
+    %builtin_annotation = pdl.attribute = "iree_uk_amdgpu_dt_matmul_f8E4M3FN_medium.mlir"
     pdl.apply_native_rewrite "annotateOperation"(%generic_op, %builtin_attr, %builtin_annotation : !pdl.operation, !pdl.attribute, !pdl.attribute)
   }
 }
@@ -877,7 +877,7 @@ pdl.pattern @annotate_inner_tiled_f8E4M3FN_large : benefit(2) {
     pdl.apply_native_rewrite "annotateOperation"(%generic_op, %config_name, %config : !pdl.operation, !pdl.attribute, !pdl.attribute)
 
     %builtin_attr = pdl.attribute = "rocm.builtin_name"
-    %builtin_annotation = pdl.attribute = "iree_uk_amdgpu_dt_matmul_f8E4M3FN.mlir"
+    %builtin_annotation = pdl.attribute = "iree_uk_amdgpu_dt_matmul_f8E4M3FN_large.mlir"
     pdl.apply_native_rewrite "annotateOperation"(%generic_op, %builtin_attr, %builtin_annotation : !pdl.operation, !pdl.attribute, !pdl.attribute)
   }
 }

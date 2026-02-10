@@ -95,6 +95,57 @@ def expand_reassoc_fold1(brackets):
     )
 
 
+def size_constraints(params: Dict[str, Any]) -> str:
+    """
+    Build the iteration_sizes_constraints list for rocm.ukernel_info.
+
+    Returns a multi-line string of #rocm.ukernel_interation_size_constraint<...>
+    for indices 0, 1, 2, formatted with one constraint per block (same style as
+    hand-written ukernels). For each index i, a constraint is emitted only if at least
+    one of SIZE_MIN_i, SIZE_MAX_i, SIZE_DIV_i is present in params (i.e. was passed
+    via -D). Only fields that were provided are included in each constraint.
+
+    Use in template as (template line has 8 spaces before ${SIZE_CONSTRAINTS}):
+      iteration_sizes_constraints = [
+        ${SIZE_CONSTRAINTS}
+      ]
+    """
+    # Template has 8 spaces before ${SIZE_CONSTRAINTS}; only the first line gets that
+    # prefix, so we add base_indent to every line we output.
+    base_indent = "        "  # 8 spaces
+    indent_inner = "  "  # index/size_* at column 10
+
+    def _constraint_for(i: int) -> str:
+        key_min = f"SIZE_MIN_{i}"
+        key_max = f"SIZE_MAX_{i}"
+        key_div = f"SIZE_DIV_{i}"
+        if key_min not in params and key_max not in params and key_div not in params:
+            return ""
+        lines = ["#rocm.ukernel_interation_size_constraint<"]
+        inner = [f"index = {i}"]
+        if key_min in params:
+            inner.append(f"size_min = {params[key_min]}")
+        if key_max in params:
+            inner.append(f"size_max = {params[key_max]}")
+        if key_div in params:
+            inner.append(f"size_div = {params[key_div]}")
+        # Format inner params: comma after all but last
+        for j, part in enumerate(inner):
+            suffix = "," if j < len(inner) - 1 else ""
+            lines.append(f"{indent_inner}{part}{suffix}")
+        lines.append(">")
+        return "\n".join(lines)
+
+    constraints = []
+    for i in [0, 1, 2]:
+        s = _constraint_for(i)
+        if s:
+            constraints.append(s)
+    raw = ",\n".join(constraints)
+    # Prepend base_indent to every line so indentation is correct when template has 8 spaces.
+    return "\n".join(base_indent + line for line in raw.split("\n"))
+
+
 def extract_internal_k(intrinsic_name: str) -> int:
     """
     Extract the K dimension from an intrinsic name and divide by 4.
@@ -222,6 +273,7 @@ def process_template(text: str, params: Dict[str, Any]) -> str:
     output_stream = io.StringIO()
     exec_globals["OUT_STREAM"] = output_stream
     exec_globals["EXPAND_REASSOC_FOLD1"] = expand_reassoc_fold1
+    exec_globals["SIZE_CONSTRAINTS"] = size_constraints(params)
 
     # Compile and execute the generated Python code.
     python_code = "\n".join(python_lines)
@@ -282,36 +334,8 @@ Example:
 
     args = parser.parse_args()
 
-    # Default parameter values.
-    DEFAULT_PARAMS = {
-        # Common defaults.
-        "ARCH": "gfx942",
-        "ELEM_TYPE": "f16",
-        "INTRINSIC": "MFMA_F32_16x16x16_F16",
-        # Benefit.
-        "BENEFIT": 1,
-        # Constraint 0: size_min=0, size_max=INT32_MAX, size_div=1.
-        "SIZE_MIN_0": 0,
-        "SIZE_MAX_0": 2147483647,
-        "SIZE_DIV_0": 1,
-        # Constraint 1: size_min=0, size_max=INT32_MAX, size_div=1.
-        "SIZE_MIN_1": 0,
-        "SIZE_MAX_1": 2147483647,
-        "SIZE_DIV_1": 1,
-        # Constraint 2: size_min=0, size_max=INT32_MAX, size_div=1.
-        "SIZE_MIN_2": 0,
-        "SIZE_MAX_2": 2147483647,
-        "SIZE_DIV_2": 1,
-        # MMA layout attributes.
-        "INTRINSICS_M": 1,
-        "INTRINSICS_N": 1,
-        "INTRINSICS_K": 1,
-        "SUBGROUPS_M": 1,
-        "SUBGROUPS_N": 1,
-    }
-
-    # Start with defaults, then override with user params.
-    params = DEFAULT_PARAMS.copy()
+    # Build params from defines.
+    params = {}
     for define in args.define:
         var, value = parse_define(define)
         params[var] = value

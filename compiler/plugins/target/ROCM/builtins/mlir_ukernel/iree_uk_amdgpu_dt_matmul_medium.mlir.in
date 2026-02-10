@@ -30,26 +30,10 @@ util.func private @pingpong_dt_medium_${ELEM_TYPE}(%lhs_base: !m_lhs_base_ty, %r
       archs = ["${ARCH}"],
       types = [${ELEM_TYPE}, ${ELEM_TYPE}, f32],
       iteration_sizes_constraints = [
-        #rocm.ukernel_interation_size_constraint<
-          index = 0,
-          size_min = ${SIZE_MIN_0},
-          size_max = ${SIZE_MAX_0},
-          size_div = ${SIZE_DIV_0}
-        >,
-        #rocm.ukernel_interation_size_constraint<
-          index = 1,
-          size_min = ${SIZE_MIN_1},
-          size_max = ${SIZE_MAX_1},
-          size_div = ${SIZE_DIV_1}
-        >,
-        #rocm.ukernel_interation_size_constraint<
-          index = 2,
-          size_min = ${SIZE_MIN_2},
-          size_max = ${SIZE_MAX_2},
-          size_div = ${SIZE_DIV_2}
-        >
+${SIZE_CONSTRAINTS}
       ]
     },
+    benefit = ${BENEFIT},
     mma = #iree_gpu.data_tiled_mma_layout<
       intrinsic = ${INTRINSIC},
       intrinsics_m = ${INTRINSICS_M},
@@ -179,11 +163,11 @@ util.func private @pingpong_dt_medium_${ELEM_TYPE}(%lhs_base: !m_lhs_base_ty, %r
       // Local stores of lhs and rhs.
       $for j in range(SUBGROUPS_N*INTRINSICS_N//SUBGROUPS_M//SUBGROUPS_N):
         vector.transfer_write %rhs_vec_local_${2*j}, %rhs_shared[%c0, %glb${j}_rhs, %glb#1, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_rhs_shared_ty
-        vector.transfer_write %rhs_vec_local_${2*j}, %rhs_shared[%c1, %glb${j}_rhs, %glb#1, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_rhs_shared_ty
+        vector.transfer_write %rhs_vec_local_${2*j+1}, %rhs_shared[%c1, %glb${j}_rhs, %glb#1, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_rhs_shared_ty
 
       $for j in range(SUBGROUPS_M*INTRINSICS_M//SUBGROUPS_M//SUBGROUPS_N):
         vector.transfer_write %lhs_vec_local_${2*j}, %lhs_shared[%c0, %glb${j}_lhs, %glb#1, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_lhs_shared_ty
-        vector.transfer_write %lhs_vec_local_${2*j}, %lhs_shared[%c1, %glb${j}_lhs, %glb#1, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_lhs_shared_ty
+        vector.transfer_write %lhs_vec_local_${2*j+1}, %lhs_shared[%c1, %glb${j}_lhs, %glb#1, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_lhs_shared_ty
 
       gpu.barrier memfence [#gpu.address_space<workgroup>]
       rocdl.sched.barrier 0

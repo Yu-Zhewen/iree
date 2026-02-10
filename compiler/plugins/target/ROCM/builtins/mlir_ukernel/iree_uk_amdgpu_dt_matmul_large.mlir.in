@@ -30,24 +30,7 @@ util.func @pingpong_dt_large_${ELEM_TYPE}(%lhs_base: !lhs_base_ty, %rhs_base: !r
       archs = ["${ARCH}"],
       types = [${ELEM_TYPE}, ${ELEM_TYPE}, f32],
       iteration_sizes_constraints = [
-        #rocm.ukernel_interation_size_constraint<
-          index = 0,
-          size_min = ${SIZE_MIN_0},
-          size_max = ${SIZE_MAX_0},
-          size_div = ${SIZE_DIV_0}
-        >,
-        #rocm.ukernel_interation_size_constraint<
-          index = 1,
-          size_min = ${SIZE_MIN_1},
-          size_max = ${SIZE_MAX_1},
-          size_div = ${SIZE_DIV_1}
-        >,
-        #rocm.ukernel_interation_size_constraint<
-          index = 2,
-          size_min = ${SIZE_MIN_2},
-          size_max = ${SIZE_MAX_2},
-          size_div = ${SIZE_DIV_2}
-        >
+${SIZE_CONSTRAINTS}
       ]
     },
     benefit = ${BENEFIT},
