@@ -95,8 +95,8 @@ ${SIZE_CONSTRAINTS}
     %ids:3 = affine.delinearize_index %id into (${SUBGROUPS_M}, ${SUBGROUPS_N}, 64) : index, index, index
     %threads:2 = affine.delinearize_index %ids#2 into (4, 16) : index, index
 
-    %m_outer = arith.muli %ids#0, %c8 overflow<nsw, nuw> : index
-    %n_outer = arith.muli %ids#1, %c4 overflow<nsw, nuw> : index
+    %m_outer = arith.muli %ids#0, %c${INTRINSICS_M} overflow<nsw, nuw> : index
+    %n_outer = arith.muli %ids#1, %c${INTRINSICS_N} overflow<nsw, nuw> : index
 
     %glb:2 = affine.delinearize_index %id into (${2*SUBGROUPS_M*SUBGROUPS_N}, 32) : index, index
     %glb0_lhs = arith.muli %glb#0, %c${SUBGROUPS_M*INTRINSICS_M//2//SUBGROUPS_M//SUBGROUPS_N} overflow<nsw, nuw> : index
