@@ -9,8 +9,8 @@
 // Generated from iree_uk_amdgpu_dt_scaled_matmul_f4E2M1FN.mlir.in
 
 // Input LHS and RHS layouts.
-!lhs_ty = tensor<1x?x1x${FOLD1(SUBGROUPS_M)}${FOLD1(INTRINSICS_M)}${FOLD1(INTRINSICS_K)}4x16x${INTERNAL_K}xf4E2M1FN>
-!rhs_ty = tensor<1x?x1x${FOLD1(SUBGROUPS_N)}${FOLD1(INTRINSICS_N)}${FOLD1(INTRINSICS_K)}4x16x${INTERNAL_K}xf4E2M1FN>
+!lhs_ty = tensor<1x?x1x${IFNOT1(SUBGROUPS_M, str(SUBGROUPS_M) + "x")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + "x")}${IFNOT1(INTRINSICS_K, str(INTRINSICS_K) + "x")}4x16x${INTERNAL_K}xf4E2M1FN>
+!rhs_ty = tensor<1x?x1x${IFNOT1(SUBGROUPS_N, str(SUBGROUPS_N) + "x")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + "x")}${IFNOT1(INTRINSICS_K, str(INTRINSICS_K) + "x")}4x16x${INTERNAL_K}xf4E2M1FN>
 
 !lhs_byte_ty = tensor<1x?x1x${SUBGROUPS_M}x${INTRINSICS_M}x${INTRINSICS_K}x4x16x${INTERNAL_K//2}xi8>
 !rhs_byte_ty = tensor<1x?x1x${SUBGROUPS_N}x${INTRINSICS_N}x${INTRINSICS_K}x4x16x${INTERNAL_K//2}xi8>
@@ -67,8 +67,8 @@ $assert (4*INTERNAL_K) == 128, "load 128 bits per instruction"
 
 !acc_ty = vector<${INTRINSICS_M}x${INTRINSICS_N}x4x1xf32>
 
-!store_ty = vector<1x1x1x1x${INTRINSICS_M}x${INTRINSICS_N}x1x1x4xf32>
-!tensor_store_ty = tensor<1x1x1x1x${INTRINSICS_M}x${INTRINSICS_N}x1x1x4xf32>
+!store_ty = vector<1x1x${IFNOT1(SUBGROUPS_M, "1x")}${IFNOT1(SUBGROUPS_N, "1x")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + "x")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + "x")}1x1x4xf32>
+!tensor_store_ty = tensor<1x1x${IFNOT1(SUBGROUPS_M, "1x")}${IFNOT1(SUBGROUPS_N, "1x")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + "x")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + "x")}1x1x4xf32>
 
 #contraction_accesses = [
   affine_map<(i, j, k, d) -> (i, d, k)>,
@@ -331,11 +331,11 @@ util.func @pingpong_dt_medium_f4E2M1FN(
     %t = vector.shape_cast %loop : !acc_ty to !store_ty
 
     %empty = tensor.empty() : !tensor_store_ty
-    %to_tensor = vector.transfer_write %t, %empty[%c0, %c0, %c0, %c0, %c0, %c0, %c0, %c0, %c0]
-      {in_bounds = [true, true, true, true, true, true, true, true, true]} : !store_ty, !tensor_store_ty
+    %to_tensor = vector.transfer_write %t, %empty[%c0, %c0, ${IFNOT1(SUBGROUPS_M, "%c0, ")}${IFNOT1(SUBGROUPS_N, "%c0, ")}${IFNOT1(INTRINSICS_M, "%c0, ")}${IFNOT1(INTRINSICS_N, "%c0, ")}%c0, %c0, %c0]
+      {in_bounds = [true, true, ${IFNOT1(SUBGROUPS_M, "true, ")}${IFNOT1(SUBGROUPS_N, "true, ")}${IFNOT1(INTRINSICS_M, "true, ")}${IFNOT1(INTRINSICS_N, "true, ")}true, true, true]} : !store_ty, !tensor_store_ty
 
     scf.forall.in_parallel {
-      tensor.parallel_insert_slice %to_tensor into %out[%c0, %c0, %subgroups#0, %subgroups#1, %c0, %c0, %threads#0, %threads#1, %c0] [1, 1, 1, 1, ${INTRINSICS_M}, ${INTRINSICS_N}, 1, 1, 4] [1, 1, 1, 1, 1, 1, 1, 1, 1]
+      tensor.parallel_insert_slice %to_tensor into %out[%c0, %c0, ${IFNOT1(SUBGROUPS_M, "%subgroups#0, ")}${IFNOT1(SUBGROUPS_N, "%subgroups#1, ")}${IFNOT1(INTRINSICS_M, "%c0, ")}${IFNOT1(INTRINSICS_N, "%c0, ")}%threads#0, %threads#1, %c0] [1, 1, ${IFNOT1(SUBGROUPS_M, "1, ")}${IFNOT1(SUBGROUPS_N, "1, ")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + ", ")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + ", ")}1, 1, 4] [1, 1, ${IFNOT1(SUBGROUPS_M, "1, ")}${IFNOT1(SUBGROUPS_N, "1, ")}${IFNOT1(INTRINSICS_M, "1, ")}${IFNOT1(INTRINSICS_N, "1, ")}1, 1, 1]
         : !tensor_store_ty into !return_ty
     }
   } {mapping = [#gpu.thread<linear_dim_0>]}

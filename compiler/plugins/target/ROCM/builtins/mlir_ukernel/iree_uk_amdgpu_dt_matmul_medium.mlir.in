@@ -8,9 +8,9 @@
 // AUTO-GENERATED - DO NOT EDIT
 // Generated from iree_uk_amdgpu_dt_matmul_medium.mlir.in
 
-!m_acc_base_ty = tensor<1x1x${FOLD1(SUBGROUPS_M)}${FOLD1(SUBGROUPS_N)}${FOLD1(INTRINSICS_M)}${FOLD1(INTRINSICS_N)}4x16x4xf32>
-!m_lhs_base_ty = tensor<1x?x${FOLD1(SUBGROUPS_M)}${FOLD1(INTRINSICS_M)}4x16x${FOLD1(INTRINSICS_K)}${INTERNAL_K}x${ELEM_TYPE}>
-!m_rhs_base_ty = tensor<1x?x${FOLD1(SUBGROUPS_N)}${FOLD1(INTRINSICS_N)}4x16x${FOLD1(INTRINSICS_K)}${INTERNAL_K}x${ELEM_TYPE}>
+!m_acc_base_ty = tensor<1x1x${IFNOT1(SUBGROUPS_M, str(SUBGROUPS_M) + "x")}${IFNOT1(SUBGROUPS_N, str(SUBGROUPS_N) + "x")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + "x")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + "x")}4x16x4xf32>
+!m_lhs_base_ty = tensor<1x?x${IFNOT1(SUBGROUPS_M, str(SUBGROUPS_M) + "x")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + "x")}4x16x${IFNOT1(INTRINSICS_K, str(INTRINSICS_K) + "x")}${INTERNAL_K}x${ELEM_TYPE}>
+!m_rhs_base_ty = tensor<1x?x${IFNOT1(SUBGROUPS_N, str(SUBGROUPS_N) + "x")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + "x")}4x16x${IFNOT1(INTRINSICS_K, str(INTRINSICS_K) + "x")}${INTERNAL_K}x${ELEM_TYPE}>
 !m_lhs_expand_ty = tensor<1x?x2x${SUBGROUPS_M}x${INTRINSICS_M}x4x16x${INTRINSICS_K}x${INTERNAL_K}x${ELEM_TYPE}>
 !m_rhs_expand_ty = tensor<1x?x2x${SUBGROUPS_N}x${INTRINSICS_N}x4x16x${INTRINSICS_K}x${INTERNAL_K}x${ELEM_TYPE}>
 !m_lhs_ty = tensor<?x2x${SUBGROUPS_M*INTRINSICS_M}x64x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
@@ -30,7 +30,7 @@ util.func private @pingpong_dt_medium_${ELEM_TYPE}(%lhs_base: !m_lhs_base_ty, %r
       archs = ["${ARCH}"],
       types = [${ELEM_TYPE}, ${ELEM_TYPE}, f32],
       iteration_sizes_constraints = [
-${SIZE_CONSTRAINTS}
+        ${SIZE_CONSTRAINTS}
       ]
     },
     benefit = ${BENEFIT},
@@ -40,7 +40,7 @@ ${SIZE_CONSTRAINTS}
       subgroups_m = ${SUBGROUPS_M},
       intrinsics_n = ${INTRINSICS_N},
       subgroups_n = ${SUBGROUPS_N},
-      intrinsics_k = 2, operands_interleaving_intrinsics_k = [0, 1]
+      intrinsics_k = ${INTRINSICS_K}, operands_interleaving_intrinsics_k = [0, 1]
     >
   >
 } {
@@ -70,19 +70,20 @@ ${SIZE_CONSTRAINTS}
   %lhs_shared = memref.alloc() : !m_lhs_shared_ty
   %rhs_shared = memref.alloc() : !m_rhs_shared_ty
 
-  scf.forall (%id) in (${128*SUBGROUPS_M*INTRINSICS_M}) {
-    %delin:3 = affine.delinearize_index %id into (2, ${SUBGROUPS_M*INTRINSICS_M}, 64) : index, index, index
-    $assert (INTRINSICS_K*INTERNAL_K) == (128//ELEM_BITS), "load 128 bits per instruction"
-    %lhs_thread_local = tensor.extract_slice %lhs [%c0, %delin#0, %delin#1, %delin#2, %c0] [1, 1, 1, 1, ${INTRINSICS_K*INTERNAL_K}] [1, 1, 1, 1, 1]  : !m_lhs_ty to tensor<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
-    %lhs_vec_local = vector.transfer_read %lhs_thread_local [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
-    vector.transfer_write %lhs_vec_local, %lhs_shared[%delin#0, %delin#1, %delin#2, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_lhs_shared_ty
+  $assert (INTRINSICS_K*INTERNAL_K*ELEM_BITS) % 128 == 0, "load 128 bits per instruction"
+  scf.forall (%id) in (${SUBGROUPS_M*INTRINSICS_M*INTRINSICS_K*INTERNAL_K*ELEM_BITS}) {
+    %delin:4 = affine.delinearize_index %id into (2, ${SUBGROUPS_M*INTRINSICS_M}, 64, ${INTRINSICS_K*INTERNAL_K*ELEM_BITS//128}) : index, index, index, index
+    %inner = arith.muli %delin#3, %c${128//ELEM_BITS} overflow<nsw, nuw> : index
+    %lhs_thread_local = tensor.extract_slice %lhs [%c0, %delin#0, %delin#1, %delin#2, %inner] [1, 1, 1, 1, ${128//ELEM_BITS}] [1, 1, 1, 1, 1]  : !m_lhs_ty to tensor<1x1x1x${128//ELEM_BITS}x${ELEM_TYPE}>
+    %lhs_vec_local = vector.transfer_read %lhs_thread_local [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x${128//ELEM_BITS}x${ELEM_TYPE}>, vector<1x1x1x${128//ELEM_BITS}x${ELEM_TYPE}>
+    vector.transfer_write %lhs_vec_local, %lhs_shared[%delin#0, %delin#1, %delin#2, %inner] {in_bounds = [true, true, true, true]} : vector<1x1x1x${128//ELEM_BITS}x${ELEM_TYPE}>, !m_lhs_shared_ty
   } {mapping = [#gpu.thread<linear_dim_0>]}
-  scf.forall (%id) in (${128*SUBGROUPS_N*INTRINSICS_N}) {
-    %delin:3 = affine.delinearize_index %id into (2, ${SUBGROUPS_N*INTRINSICS_N}, 64) : index, index, index
-    $assert (INTRINSICS_K*INTERNAL_K) == (128//ELEM_BITS), "load 128 bits per instruction"
-    %rhs_thread_local = tensor.extract_slice %rhs [%c0, %delin#0, %delin#1, %delin#2, %c0] [1, 1, 1, 1, ${INTRINSICS_K*INTERNAL_K}] [1, 1, 1, 1, 1] : !m_rhs_ty to tensor<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
-    %rhs_vec_local = vector.transfer_read %rhs_thread_local [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
-    vector.transfer_write %rhs_vec_local, %rhs_shared[%delin#0, %delin#1, %delin#2, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_rhs_shared_ty
+  scf.forall (%id) in (${SUBGROUPS_N*INTRINSICS_N*INTRINSICS_K*INTERNAL_K*ELEM_BITS}) {
+    %delin:4 = affine.delinearize_index %id into (2, ${SUBGROUPS_N*INTRINSICS_N}, 64, ${INTRINSICS_K*INTERNAL_K*ELEM_BITS//128}) : index, index, index, index
+    %inner = arith.muli %delin#3, %c${128//ELEM_BITS} overflow<nsw, nuw> : index
+    %rhs_thread_local = tensor.extract_slice %rhs [%c0, %delin#0, %delin#1, %delin#2, %inner] [1, 1, 1, 1, ${128//ELEM_BITS}] [1, 1, 1, 1, 1] : !m_rhs_ty to tensor<1x1x1x${128//ELEM_BITS}x${ELEM_TYPE}>
+    %rhs_vec_local = vector.transfer_read %rhs_thread_local [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x${128//ELEM_BITS}x${ELEM_TYPE}>, vector<1x1x1x${128//ELEM_BITS}x${ELEM_TYPE}>
+    vector.transfer_write %rhs_vec_local, %rhs_shared[%delin#0, %delin#1, %delin#2, %inner] {in_bounds = [true, true, true, true]} : vector<1x1x1x${128//ELEM_BITS}x${ELEM_TYPE}>, !m_rhs_shared_ty
   } {mapping = [#gpu.thread<linear_dim_0>]}
 
   %0 = tensor.empty() : !m_acc_base_ty
@@ -121,6 +122,7 @@ ${SIZE_CONSTRAINTS}
       rocdl.sched.barrier 0
 
       // Global loads of lhs.
+      $assert (SUBGROUPS_M*INTRINSICS_M) % (SUBGROUPS_M*SUBGROUPS_N) == 0
       $for j in range(SUBGROUPS_M*INTRINSICS_M//SUBGROUPS_M//SUBGROUPS_N):
         %lhs_thread_${2*j} = tensor.extract_slice %lhs [%i, %c0, %glb${j}_lhs, %glb#1, %c0] [1, 1, 1, 1, ${INTRINSICS_K*INTERNAL_K}] [1, 1, 1, 1, 1] : !m_lhs_ty to tensor<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
         %lhs_vec_local_${2*j} = vector.transfer_read %lhs_thread_${2*j} [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
@@ -139,6 +141,7 @@ ${SIZE_CONSTRAINTS}
       rocdl.sched.barrier 0
 
       // Global loads of rhs.
+      $assert (SUBGROUPS_N*INTRINSICS_N) % (SUBGROUPS_M*SUBGROUPS_N) == 0
       $for j in range(SUBGROUPS_N*INTRINSICS_N//SUBGROUPS_M//SUBGROUPS_N):
         %rhs_thread_${2*j} = tensor.extract_slice %rhs [%i, %c0, %glb${j}_rhs, %glb#1, %c0] [1, 1, 1, 1, ${INTRINSICS_K*INTERNAL_K}] [1, 1, 1, 1, 1] : !m_rhs_ty to tensor<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
         %rhs_vec_local_${2*j} = vector.transfer_read %rhs_thread_${2*j} [%c0, %c0, %c0, %c0], %cst {in_bounds = [true, true, true, true]} : tensor<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
@@ -161,10 +164,12 @@ ${SIZE_CONSTRAINTS}
       rocdl.sched.barrier 0
 
       // Local stores of lhs and rhs.
+      $assert (SUBGROUPS_N*INTRINSICS_N) % (SUBGROUPS_M*SUBGROUPS_N) == 0
       $for j in range(SUBGROUPS_N*INTRINSICS_N//SUBGROUPS_M//SUBGROUPS_N):
         vector.transfer_write %rhs_vec_local_${2*j}, %rhs_shared[%c0, %glb${j}_rhs, %glb#1, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_rhs_shared_ty
         vector.transfer_write %rhs_vec_local_${2*j+1}, %rhs_shared[%c1, %glb${j}_rhs, %glb#1, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_rhs_shared_ty
 
+      $assert (SUBGROUPS_M*INTRINSICS_M) % (SUBGROUPS_M*SUBGROUPS_N) == 0
       $for j in range(SUBGROUPS_M*INTRINSICS_M//SUBGROUPS_M//SUBGROUPS_N):
         vector.transfer_write %lhs_vec_local_${2*j}, %lhs_shared[%c0, %glb${j}_lhs, %glb#1, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_lhs_shared_ty
         vector.transfer_write %lhs_vec_local_${2*j+1}, %lhs_shared[%c1, %glb${j}_lhs, %glb#1, %c0] {in_bounds = [true, true, true, true]} : vector<1x1x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>, !m_lhs_shared_ty
@@ -191,13 +196,13 @@ ${SIZE_CONSTRAINTS}
     }
 
     // Epilogue
-    %lhs_vec = vector.transfer_read %lhs_shared[%c0, %ids#0, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : !m_lhs_shared_ty, vector<2x${INTRINSICS_M}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
+    %lhs_vec = vector.transfer_read %lhs_shared[%c0, %m_outer, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : !m_lhs_shared_ty, vector<2x${INTRINSICS_M}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
     %lhs_vec_0 = vector.extract_strided_slice %lhs_vec {offsets = [0, 0, 0, 0], sizes = [1, ${INTRINSICS_M}, 1, ${INTRINSICS_K*INTERNAL_K}], strides = [1, 1, 1, 1]} : vector<2x${INTRINSICS_M}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}> to vector<1x${INTRINSICS_M}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
     %lhs_vec_2 = vector.extract_strided_slice %lhs_vec {offsets = [1, 0, 0, 0], sizes = [1, ${INTRINSICS_M}, 1, ${INTRINSICS_K*INTERNAL_K}], strides = [1, 1, 1, 1]} : vector<2x${INTRINSICS_M}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}> to vector<1x${INTRINSICS_M}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
     %lhs_vec_0_t = vector.shape_cast %lhs_vec_0 : vector<1x${INTRINSICS_M}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}> to vector<${INTRINSICS_M}x${INTRINSICS_K}x1x${INTERNAL_K}x${ELEM_TYPE}>
     %lhs_vec_2_t = vector.shape_cast %lhs_vec_2 : vector<1x${INTRINSICS_M}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}> to vector<${INTRINSICS_M}x${INTRINSICS_K}x1x${INTERNAL_K}x${ELEM_TYPE}>
 
-    %rhs_vec = vector.transfer_read %rhs_shared[%c0, %glb0_rhs, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : !m_rhs_shared_ty, vector<2x${INTRINSICS_N}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
+    %rhs_vec = vector.transfer_read %rhs_shared[%c0, %n_outer, %ids#2, %c0], %cst {in_bounds = [true, true, true, true]} : !m_rhs_shared_ty, vector<2x${INTRINSICS_N}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
     %rhs_vec_0 = vector.extract_strided_slice %rhs_vec {offsets = [0, 0, 0, 0], sizes = [1, ${INTRINSICS_N}, 1, ${INTRINSICS_K*INTERNAL_K}], strides = [1, 1, 1, 1]} : vector<2x${INTRINSICS_N}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}> to vector<1x${INTRINSICS_N}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
     %rhs_vec_2 = vector.extract_strided_slice %rhs_vec {offsets = [1, 0, 0, 0], sizes = [1, ${INTRINSICS_N}, 1, ${INTRINSICS_K*INTERNAL_K}], strides = [1, 1, 1, 1]} : vector<2x${INTRINSICS_N}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}> to vector<1x${INTRINSICS_N}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}>
     %rhs_vec_0_t = vector.shape_cast %rhs_vec_0 : vector<1x${INTRINSICS_N}x1x${INTRINSICS_K*INTERNAL_K}x${ELEM_TYPE}> to vector<${INTRINSICS_N}x${INTRINSICS_K}x1x${INTERNAL_K}x${ELEM_TYPE}>
@@ -217,11 +222,11 @@ ${SIZE_CONSTRAINTS}
       semantics = #iree_gpu.mma_semantics<distributed = true, opaque = false>
     } : vector<${INTRINSICS_M}x${INTRINSICS_K}x1x${INTERNAL_K}x${ELEM_TYPE}>, vector<${INTRINSICS_N}x${INTRINSICS_K}x1x${INTERNAL_K}x${ELEM_TYPE}> into vector<${INTRINSICS_M}x${INTRINSICS_N}x1x4xf32>
 
-    %empty = tensor.empty() : tensor<1x1x1x${INTRINSICS_M}x${INTRINSICS_N}x1x1x4xf32>
-    %cast = vector.shape_cast %dot2 : vector<${INTRINSICS_M}x${INTRINSICS_N}x1x4xf32> to vector<1x1x1x${INTRINSICS_M}x${INTRINSICS_N}x1x1x4xf32>
-    %4 = vector.transfer_write %cast, %empty[%c0, %c0, %c0, %c0, %c0, %c0, %c0, %c0] {in_bounds = [true, true, true, true, true, true, true, true]} : vector<1x1x1x${INTRINSICS_M}x${INTRINSICS_N}x1x1x4xf32>, tensor<1x1x1x${INTRINSICS_M}x${INTRINSICS_N}x1x1x4xf32>
+    %empty = tensor.empty() : tensor<1x1x${IFNOT1(SUBGROUPS_M, "1x")}${IFNOT1(SUBGROUPS_N, "1x")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + "x")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + "x")}1x1x4xf32>
+    %cast = vector.shape_cast %dot2 : vector<${INTRINSICS_M}x${INTRINSICS_N}x1x4xf32> to vector<1x1x${IFNOT1(SUBGROUPS_M, "1x")}${IFNOT1(SUBGROUPS_N, "1x")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + "x")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + "x")}1x1x4xf32>
+    %4 = vector.transfer_write %cast, %empty[%c0, %c0, ${IFNOT1(SUBGROUPS_M, "%c0, ")}${IFNOT1(SUBGROUPS_N, "%c0, ")}${IFNOT1(INTRINSICS_M, "%c0, ")}${IFNOT1(INTRINSICS_N, "%c0, ")}%c0, %c0, %c0] {in_bounds = [true, true, ${IFNOT1(SUBGROUPS_M, "true, ")}${IFNOT1(SUBGROUPS_N, "true, ")}${IFNOT1(INTRINSICS_M, "true, ")}${IFNOT1(INTRINSICS_N, "true, ")}true, true, true]} : vector<1x1x${IFNOT1(SUBGROUPS_M, "1x")}${IFNOT1(SUBGROUPS_N, "1x")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + "x")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + "x")}1x1x4xf32>, tensor<1x1x${IFNOT1(SUBGROUPS_M, "1x")}${IFNOT1(SUBGROUPS_N, "1x")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + "x")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + "x")}1x1x4xf32>
     scf.forall.in_parallel {
-      tensor.parallel_insert_slice %4 into %out[%c0, %c0, %ids#1, %c0, %c0, %threads#0, %threads#1, %c0] [1, 1, 1, ${INTRINSICS_M}, ${INTRINSICS_N}, 1, 1, 4] [1, 1, 1, 1, 1, 1, 1, 1] : tensor<1x1x1x${INTRINSICS_M}x${INTRINSICS_N}x1x1x4xf32> into !m_acc_base_ty
+      tensor.parallel_insert_slice %4 into %out[%c0, %c0, ${IFNOT1(SUBGROUPS_M, "%ids#0, ")}${IFNOT1(SUBGROUPS_N, "%ids#1, ")}${IFNOT1(INTRINSICS_M, "%c0, ")}${IFNOT1(INTRINSICS_N, "%c0, ")}%threads#0, %threads#1, %c0] [1, 1, ${IFNOT1(SUBGROUPS_M, "1, ")}${IFNOT1(SUBGROUPS_N, "1, ")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + ", ")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + ", ")}1, 1, 4] [1, 1, ${IFNOT1(SUBGROUPS_M, "1, ")}${IFNOT1(SUBGROUPS_N, "1, ")}${IFNOT1(INTRINSICS_M, "1, ")}${IFNOT1(INTRINSICS_N, "1, ")}1, 1, 1] : tensor<1x1x${IFNOT1(SUBGROUPS_M, "1x")}${IFNOT1(SUBGROUPS_N, "1x")}${IFNOT1(INTRINSICS_M, str(INTRINSICS_M) + "x")}${IFNOT1(INTRINSICS_N, str(INTRINSICS_N) + "x")}1x1x4xf32> into !m_acc_base_ty
     }
   } {mapping = [#gpu.thread<linear_dim_0>]}
   util.return %1 : !m_acc_base_ty

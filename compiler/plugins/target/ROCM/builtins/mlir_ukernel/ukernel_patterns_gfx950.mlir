@@ -781,9 +781,9 @@ pdl.pattern @annotate_inner_tiled_f8E4M3FN_medium : benefit(1) {
   %attr_name = pdl.attribute = "iree_codegen.ukernel"
   pdl.apply_native_constraint "hasAttr"(%generic_op, %attr_name : !pdl.operation, !pdl.attribute) {isNegated = true}
 
-  %lhs_cast_type = pdl.type : tensor<?x?x8x4x16x2x8xf8E4M3FN>
+  %lhs_cast_type = pdl.type : tensor<?x?x2x4x4x16x32xf8E4M3FN>
   pdl.apply_native_constraint "matchCastCompatibleType"(%lhs, %lhs_cast_type : !pdl.value, !pdl.type)
-  %rhs_cast_type = pdl.type : tensor<?x?x8x2x4x16x2x8xf8E4M3FN>
+  %rhs_cast_type = pdl.type : tensor<?x?x4x2x4x16x32xf8E4M3FN>
   pdl.apply_native_constraint "matchCastCompatibleType"(%rhs, %rhs_cast_type : !pdl.value, !pdl.type)
 
   // Pingpong on outer K dim, this kernel has 2 pingpong stages.
@@ -825,7 +825,7 @@ pdl.pattern @annotate_inner_tiled_f8E4M3FN_medium : benefit(1) {
   }
 }
 
-pdl.pattern @annotate_inner_tiled_f8E4M3FN_large : benefit(2) {
+pdl.pattern @annotate_inner_tiled_f8E4M3FN_large : benefit(0) {
   %lhs_type = pdl.type
   %rhs_type = pdl.type
   %out_type = pdl.type

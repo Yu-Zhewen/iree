@@ -25,7 +25,7 @@ Template syntax:
 import argparse
 import io
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 ELEM_TYPE_BITS = {
     "bf16": 16,
@@ -37,12 +37,11 @@ ELEM_TYPE_BITS = {
 }
 
 
-def fold1(val):
+def ifnot1(val, output: str) -> str:
     """
-    Fold dimension if value is 1.
-    Returns 'valx' if val != 1, else empty string.
+    If val != 1 return output, else return "".
     """
-    return f"{val}x" if val != 1 else ""
+    return output if val != 1 else ""
 
 
 def expand_reassoc_fold1(brackets):
@@ -95,25 +94,12 @@ def expand_reassoc_fold1(brackets):
     )
 
 
-def size_constraints(params: Dict[str, Any]) -> str:
+def size_constraints(params: Dict[str, Any], indices: List[int] = [0, 1, 2]) -> str:
     """
     Build the iteration_sizes_constraints list for rocm.ukernel_info.
 
-    Returns a multi-line string of #rocm.ukernel_interation_size_constraint<...>
-    for indices 0, 1, 2, formatted with one constraint per block (same style as
-    hand-written ukernels). For each index i, a constraint is emitted only if at least
-    one of SIZE_MIN_i, SIZE_MAX_i, SIZE_DIV_i is present in params (i.e. was passed
-    via -D). Only fields that were provided are included in each constraint.
-
-    Use in template as (template line has 8 spaces before ${SIZE_CONSTRAINTS}):
-      iteration_sizes_constraints = [
-        ${SIZE_CONSTRAINTS}
-      ]
+    For each index i, a constraint is emitted only if at least one of SIZE_MIN_i, SIZE_MAX_i, SIZE_DIV_i is present in params.
     """
-    # Template has 8 spaces before ${SIZE_CONSTRAINTS}; only the first line gets that
-    # prefix, so we add base_indent to every line we output.
-    base_indent = "        "  # 8 spaces
-    indent_inner = "  "  # index/size_* at column 10
 
     def _constraint_for(i: int) -> str:
         key_min = f"SIZE_MIN_{i}"
@@ -121,7 +107,6 @@ def size_constraints(params: Dict[str, Any]) -> str:
         key_div = f"SIZE_DIV_{i}"
         if key_min not in params and key_max not in params and key_div not in params:
             return ""
-        lines = ["#rocm.ukernel_interation_size_constraint<"]
         inner = [f"index = {i}"]
         if key_min in params:
             inner.append(f"size_min = {params[key_min]}")
@@ -129,21 +114,10 @@ def size_constraints(params: Dict[str, Any]) -> str:
             inner.append(f"size_max = {params[key_max]}")
         if key_div in params:
             inner.append(f"size_div = {params[key_div]}")
-        # Format inner params: comma after all but last
-        for j, part in enumerate(inner):
-            suffix = "," if j < len(inner) - 1 else ""
-            lines.append(f"{indent_inner}{part}{suffix}")
-        lines.append(">")
-        return "\n".join(lines)
+        return "#rocm.ukernel_interation_size_constraint<" + ", ".join(inner) + ">"
 
-    constraints = []
-    for i in [0, 1, 2]:
-        s = _constraint_for(i)
-        if s:
-            constraints.append(s)
-    raw = ",\n".join(constraints)
-    # Prepend base_indent to every line so indentation is correct when template has 8 spaces.
-    return "\n".join(base_indent + line for line in raw.split("\n"))
+    constraints = [s for i in indices if (s := _constraint_for(i))]
+    return ", ".join(constraints)
 
 
 def extract_internal_k(intrinsic_name: str) -> int:
@@ -269,7 +243,7 @@ def process_template(text: str, params: Dict[str, Any]) -> str:
 
     # Set up execution context.
     exec_globals = params.copy()
-    exec_globals["FOLD1"] = fold1
+    exec_globals["IFNOT1"] = ifnot1
     output_stream = io.StringIO()
     exec_globals["OUT_STREAM"] = output_stream
     exec_globals["EXPAND_REASSOC_FOLD1"] = expand_reassoc_fold1
