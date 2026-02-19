@@ -86,7 +86,7 @@ pdl.pattern @f8E4M3_pingpong : benefit(1) {
 
   pdl.rewrite %matmul {
     %ranges = pdl.attribute = #util<int.assumption.multi_array[
-        [<umin = 2048, udiv = 128>, <umin = 2048, udiv = 128>, <udiv = 128>], // Large pingpong
+        [<umin = 2048, udiv = 256>, <umin = 2048, udiv = 256>, <udiv = 128>], // Large pingpong
         [<umin = 1024, udiv = 128>, <umin = 1024, udiv = 128>, <udiv = 128>]  // Medium pingpong
       ]>
     pdl.apply_native_rewrite "annotateOperation"(
