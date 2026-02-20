@@ -728,7 +728,7 @@ def IREEExpandStridedMetadataPass :
   let options = [
     Option<"allowSubviewExpansion", "allow-subview-expansion", "bool", /*default=*/"false",
            "Enables expansion of memref.subview ops">,
-    Option<"allowUnresolved", "allow-unresolved", "bool", /*default=*/"false",
+    Option<"allowUnresolved", "allow-unresolved", "bool", /*default=*/"true",
            "Allow unresolved strided metadata op (for testing)">,
   ];
 }
