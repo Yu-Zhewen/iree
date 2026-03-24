@@ -919,7 +919,20 @@ getMatmulOrIGEMMLoweringConfigAndWorkgroupSize(
   auto defaultConfigAttr = IREE::GPU::DerivedThreadConfigAttr::get(context);
   Attribute useGlobalDma = IREE::GPU::UseGlobalLoadDMAAttr::get(context);
   if (useDirectLoad && !scaled) {
-    promotionArray = {useGlobalDma, useGlobalDma};
+    // Apply XOR swizzle on top of DMA for bank conflict avoidance.
+    // The DMA lowering pass applies inverse source swizzle to produce
+    // the correct swizzled layout in LDS.
+    FailureOr<Attribute> lhsSwizzleAttr = getXorShuffleAttr(
+        context, useGlobalDma, target, kind, schedule->kTileSizes,
+        kMMAOperandLhs);
+    FailureOr<Attribute> rhsSwizzleAttr = getXorShuffleAttr(
+        context, useGlobalDma, target, kind, schedule->kTileSizes,
+        kMMAOperandRhs);
+    if (failed(lhsSwizzleAttr) || failed(rhsSwizzleAttr)) {
+      promotionArray = {useGlobalDma, useGlobalDma};
+    } else {
+      promotionArray = {*lhsSwizzleAttr, *rhsSwizzleAttr};
+    }
   }
   SmallVector<int64_t> promotionList = {0, 1};
   if (scaled) {
