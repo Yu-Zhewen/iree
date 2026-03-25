@@ -699,3 +699,52 @@ func.func @gather_to_lds_nested_loop_async(
   }
   return
 }
+
+// -----
+
+// Test that swizzle_hint is cloned onto the read-side iter_arg and loop result
+// after pipelining.
+
+// CHECK-LABEL: @prefetch_gather_to_lds_with_swizzle
+func.func @prefetch_gather_to_lds_with_swizzle(
+    %global: memref<128x8xf32>,
+    %output: memref<8xf32>) {
+  %cst = arith.constant dense<0.000000e+00> : vector<1xf32>
+  %cst_0 = arith.constant 0.000000e+00 : f32
+  %c128 = arith.constant 128 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+
+  // CHECK: memref.alloc() : memref<2x1x8xf32, #gpu.address_space<workgroup>>
+  %alloc = memref.alloc() : memref<1x8xf32, #gpu.address_space<workgroup>>
+  %collapsed = memref.collapse_shape %alloc [[0, 1]] : memref<1x8xf32, #gpu.address_space<workgroup>> into memref<8xf32, #gpu.address_space<workgroup>>
+  %swizzled = iree_codegen.swizzle_hint %collapsed [#iree_codegen.xor_shuffle<128, 8>] : memref<8xf32, #gpu.address_space<workgroup>>
+  %expanded = memref.expand_shape %swizzled [[0, 1]] output_shape [1, 8] : memref<8xf32, #gpu.address_space<workgroup>> into memref<1x8xf32, #gpu.address_space<workgroup>>
+
+  // Prologue: write stage with swizzle
+  // CHECK: iree_codegen.swizzle_hint {{.*}}[#iree_codegen.xor_shuffle<128, 8>]
+  // CHECK: amdgpu.gather_to_lds async
+  // CHECK: rocdl.asyncmark
+  // CHECK: scf.for
+  %result = scf.for %k = %c0 to %c128 step %c1 iter_args(%acc = %cst) -> (vector<1xf32>) {
+    amdgpu.gather_to_lds %global[%k, %c0], %expanded[%c0, %c0] : vector<1xf32>, memref<128x8xf32>, memref<1x8xf32, #gpu.address_space<workgroup>>
+    %val = vector.transfer_read %expanded[%c0, %c0], %cst_0 : memref<1x8xf32, #gpu.address_space<workgroup>>, vector<1xf32>
+    %sum = arith.addf %val, %acc : vector<1xf32>
+    scf.yield %sum : vector<1xf32>
+  }
+
+  // Read-side iter_arg: swizzle_hint cloned onto iter_arg for correct reads
+  // CHECK:      iree_codegen.swizzle_hint {{.*}}[#iree_codegen.xor_shuffle<128, 8>]
+  // Write-side: swizzle_hint on new write buffer
+  // CHECK:      iree_codegen.swizzle_hint {{.*}}[#iree_codegen.xor_shuffle<128, 8>]
+  // CHECK:      amdgpu.gather_to_lds async
+  // CHECK:      vector.transfer_read
+  // CHECK:      scf.yield
+
+  // Epilogue: swizzle_hint cloned onto loop result
+  // CHECK: iree_codegen.swizzle_hint {{.*}}[#iree_codegen.xor_shuffle<128, 8>]
+  // CHECK: vector.transfer_read
+
+  vector.transfer_write %result, %output[%c0] {in_bounds = [true]} : vector<1xf32>, memref<8xf32>
+  return
+}

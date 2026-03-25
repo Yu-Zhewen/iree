@@ -921,22 +921,27 @@ getMatmulOrIGEMMLoweringConfigAndWorkgroupSize(
   if (!scaled && useDirectLoad) {
     Attribute lhsAttr = useGlobalDma;
     Attribute rhsAttr = useGlobalDma;
-    // Apply XOR swizzle for bank conflict avoidance. Only swizzle operands
-    // whose reduction dim is innermost (contiguous reads).
-    if (!transposedLhs) {
-      FailureOr<Attribute> lhsSwizzleAttr =
-          getXorShuffleAttr(context, useGlobalDma, target, kind,
-                            schedule->kTileSizes, kMMAOperandLhs);
-      if (succeeded(lhsSwizzleAttr)) {
-        lhsAttr = *lhsSwizzleAttr;
+    // Apply XOR swizzle for BF16 DMA operands whose reduction dim is
+    // innermost (contiguous reads) to avoid LDS bank conflicts.
+    SmallVector<Type> elemTypes;
+    kind.getElementTypes(elemTypes);
+    bool isBF16 = !elemTypes.empty() && elemTypes[0].isBF16();
+    if (isBF16) {
+      if (!transposedLhs) {
+        FailureOr<Attribute> lhsSwizzleAttr =
+            getXorShuffleAttr(context, useGlobalDma, target, kind,
+                              schedule->kTileSizes, kMMAOperandLhs);
+        if (succeeded(lhsSwizzleAttr)) {
+          lhsAttr = *lhsSwizzleAttr;
+        }
       }
-    }
-    if (transposedRhs) {
-      FailureOr<Attribute> rhsSwizzleAttr =
-          getXorShuffleAttr(context, useGlobalDma, target, kind,
-                            schedule->kTileSizes, kMMAOperandRhs);
-      if (succeeded(rhsSwizzleAttr)) {
-        rhsAttr = *rhsSwizzleAttr;
+      if (transposedRhs) {
+        FailureOr<Attribute> rhsSwizzleAttr =
+            getXorShuffleAttr(context, useGlobalDma, target, kind,
+                              schedule->kTileSizes, kMMAOperandRhs);
+        if (succeeded(rhsSwizzleAttr)) {
+          rhsAttr = *rhsSwizzleAttr;
+        }
       }
     }
     promotionArray = {lhsAttr, rhsAttr};
