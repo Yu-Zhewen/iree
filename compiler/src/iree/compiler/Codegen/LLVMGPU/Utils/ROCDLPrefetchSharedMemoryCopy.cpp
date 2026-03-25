@@ -4,6 +4,7 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+#include "iree/compiler/Codegen/Dialect/Codegen/IR/IREECodegenOps.h"
 #include "iree/compiler/Codegen/LLVMGPU/Utils/LLVMGPUUtils.h"
 #include "iree/compiler/Codegen/Utils/GPUUtils.h"
 #include "iree/compiler/Codegen/Utils/Utils.h"
@@ -136,7 +137,7 @@ static bool hasStreamCopyOps(scf::ForOp forOp) {
   return hasGlobalRead && hasSharedWrite;
 }
 
-/// Trace through view-like ops to find the root allocation.
+/// Trace through view-like ops and swizzle hints to find the root allocation.
 static memref::AllocOp traceToAllocation(Value base) {
   while (base) {
     if (auto alloc = base.getDefiningOp<memref::AllocOp>()) {
@@ -144,6 +145,8 @@ static memref::AllocOp traceToAllocation(Value base) {
     }
     if (auto viewOp = base.getDefiningOp<ViewLikeOpInterface>()) {
       base = viewOp.getViewSource();
+    } else if (auto hint = base.getDefiningOp<IREE::Codegen::SwizzleHintOp>()) {
+      base = hint.getOperand();
     } else {
       break;
     }
@@ -151,17 +154,16 @@ static memref::AllocOp traceToAllocation(Value base) {
   return nullptr;
 }
 
-/// Collect all view-like ops that need to be cloned inside the loop.
-/// Returns ops in topological order (dependencies first).
+/// Collect all view-like ops and swizzle hints that need to be cloned inside
+/// the loop. Returns ops in topological order (dependencies first).
 /// Returns failure if any use escapes the target loop.
 static FailureOr<SmallVector<Operation *>>
-collectViewOpsToClone(memref::AllocOp alloc, scf::ForOp forOp) {
-  SetVector<Operation *> viewOpsToClone;
+collectOpsToClone(memref::AllocOp alloc, scf::ForOp forOp) {
+  SetVector<Operation *> opsToClone;
   SmallVector<Value> worklist;
 
   worklist.push_back(alloc.getResult());
 
-  // Collect all view-like ops outside the loop reachable from the allocation.
   while (!worklist.empty()) {
     Value val = worklist.pop_back_val();
     for (Operation *user : val.getUsers()) {
@@ -169,8 +171,12 @@ collectViewOpsToClone(memref::AllocOp alloc, scf::ForOp forOp) {
         continue;
       }
       if (auto viewOp = dyn_cast<ViewLikeOpInterface>(user)) {
-        if (viewOpsToClone.insert(user)) {
+        if (opsToClone.insert(user)) {
           worklist.push_back(viewOp.getViewDest());
+        }
+      } else if (auto hint = dyn_cast<IREE::Codegen::SwizzleHintOp>(user)) {
+        if (opsToClone.insert(user)) {
+          worklist.push_back(hint.getResult());
         }
       }
     }
@@ -181,14 +187,14 @@ collectViewOpsToClone(memref::AllocOp alloc, scf::ForOp forOp) {
       if (forOp->isAncestor(user)) {
         continue;
       }
-      if (viewOpsToClone.contains(user)) {
+      if (opsToClone.contains(user)) {
         continue;
       }
-      // Dealloc should not block view-op cloning.
+      // Dealloc should not block cloning.
       if (isa<memref::DeallocOp>(user)) {
         continue;
       }
-      LDBG() << "Cannot clone view ops: found use outside loop: " << *user;
+      LDBG() << "Cannot clone ops: found use outside loop: " << *user;
       return failure();
     }
     return success();
@@ -198,14 +204,21 @@ collectViewOpsToClone(memref::AllocOp alloc, scf::ForOp forOp) {
     return failure();
   }
 
-  for (Operation *op : viewOpsToClone) {
-    auto viewOp = cast<ViewLikeOpInterface>(op);
-    if (failed(validateUses(viewOp.getViewDest()))) {
+  for (Operation *op : opsToClone) {
+    Value dest;
+    if (auto viewOp = dyn_cast<ViewLikeOpInterface>(op)) {
+      dest = viewOp.getViewDest();
+    } else if (auto hint = dyn_cast<IREE::Codegen::SwizzleHintOp>(op)) {
+      dest = hint.getResult();
+    } else {
+      return failure();
+    }
+    if (failed(validateUses(dest))) {
       return failure();
     }
   }
 
-  SmallVector<Operation *> result(viewOpsToClone.begin(), viewOpsToClone.end());
+  SmallVector<Operation *> result(opsToClone.begin(), opsToClone.end());
 
   // Sort in topological order - ops must come after their dependencies
   llvm::stable_sort(
@@ -214,23 +227,23 @@ collectViewOpsToClone(memref::AllocOp alloc, scf::ForOp forOp) {
   return result;
 }
 
-/// Clone view-like operations inside the loop body.
-/// This is necessary for multi-buffering to work when view ops are defined
+/// Clone view-like ops and swizzle hints inside the loop body.
+/// This is necessary for multi-buffering to work when these ops are defined
 /// outside the target loop but used inside it.
-static LogicalResult cloneViewOpsInsideLoop(memref::AllocOp alloc,
-                                            scf::ForOp forOp) {
-  auto viewOpsOr = collectViewOpsToClone(alloc, forOp);
-  if (failed(viewOpsOr)) {
+static LogicalResult cloneOpsInsideLoop(memref::AllocOp alloc,
+                                        scf::ForOp forOp) {
+  auto opsOr = collectOpsToClone(alloc, forOp);
+  if (failed(opsOr)) {
     return failure();
   }
 
-  SmallVector<Operation *> &viewOps = *viewOpsOr;
-  if (viewOps.empty()) {
+  SmallVector<Operation *> &ops = *opsOr;
+  if (ops.empty()) {
     return success();
   }
 
-  LDBG() << "Cloning " << viewOps.size()
-         << " view ops inside loop for allocation: " << *alloc;
+  LDBG() << "Cloning " << ops.size()
+         << " ops inside loop for allocation: " << *alloc;
 
   // Create clones at the beginning of the loop body
   Block *loopBody = forOp.getBody();
@@ -239,7 +252,7 @@ static LogicalResult cloneViewOpsInsideLoop(memref::AllocOp alloc,
 
   IRMapping mapping;
   SmallVector<Operation *> opsToErase;
-  for (Operation *op : viewOps) {
+  for (Operation *op : ops) {
     Operation *clone = builder.clone(*op, mapping);
     LDBG() << "  Cloned: " << *op << " -> " << *clone;
 
@@ -263,6 +276,32 @@ static LogicalResult cloneViewOpsInsideLoop(memref::AllocOp alloc,
   }
 
   return success();
+}
+
+/// memref::multiBuffer propagates type changes through a set of known view-like
+/// ops (subview, expand_shape, etc.). SwizzleHintOp is not in that set, so fix
+/// up the result types of the hint and downstream ExpandShapeOp consumers.
+static void propagateTypeFromMultiBuffer(scf::ForOp forOp) {
+  forOp->walk([](IREE::Codegen::SwizzleHintOp hint) {
+    if (hint.getOperand().getType() != hint.getResult().getType()) {
+      hint.getResult().setType(hint.getOperand().getType());
+    }
+  });
+  forOp->walk([](memref::ExpandShapeOp expandOp) {
+    auto srcType = cast<MemRefType>(expandOp.getSrc().getType());
+    MemRefType resultType = expandOp.getResultType();
+    if (srcType.getLayout() == resultType.getLayout()) {
+      return;
+    }
+    FailureOr<MemRefType> newResultType =
+        memref::ExpandShapeOp::computeExpandedType(
+            srcType, resultType.getShape(),
+            expandOp.getReassociationIndices());
+    if (failed(newResultType)) {
+      return;
+    }
+    expandOp.getResult().setType(*newResultType);
+  });
 }
 
 /// Multi-buffer LDS allocations used by gather_to_lds operations.
@@ -289,7 +328,7 @@ static LogicalResult multiBufferLDSAllocations(scf::ForOp forOp,
 
   // First, clone view ops inside the loop for each allocation
   for (memref::AllocOp alloc : sharedAllocs) {
-    if (failed(cloneViewOpsInsideLoop(alloc, forOp))) {
+    if (failed(cloneOpsInsideLoop(alloc, forOp))) {
       LDBG() << "Failed to clone view ops for: " << *alloc;
       return failure();
     }
@@ -306,6 +345,9 @@ static LogicalResult multiBufferLDSAllocations(scf::ForOp forOp,
     LDBG() << "Multi-buffered LDS allocation with " << numBuffers
            << " buffers at " << loc;
   }
+
+  // Fix up types for swizzle hints after multi-buffering.
+  propagateTypeFromMultiBuffer(forOp);
 
   return success();
 }
