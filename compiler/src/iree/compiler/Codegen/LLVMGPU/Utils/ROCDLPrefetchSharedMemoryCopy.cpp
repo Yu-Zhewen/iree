@@ -295,13 +295,74 @@ static void propagateTypeFromMultiBuffer(scf::ForOp forOp) {
     }
     FailureOr<MemRefType> newResultType =
         memref::ExpandShapeOp::computeExpandedType(
-            srcType, resultType.getShape(),
-            expandOp.getReassociationIndices());
+            srcType, resultType.getShape(), expandOp.getReassociationIndices());
     if (failed(newResultType)) {
       return;
     }
     expandOp.getResult().setType(*newResultType);
   });
+}
+
+/// After pipelining, the write path retains swizzle_hint but the read path
+/// does not. Clone swizzle_hint onto read-side iter_args and loop results.
+static void cloneSwizzleHint(scf::ForOp forOp) {
+  Block *body = forOp.getBody();
+  auto yieldOp = cast<scf::YieldOp>(body->getTerminator());
+  int numOperands = yieldOp.getNumOperands();
+
+  OpBuilder builder(forOp.getContext());
+
+  // Reverse order because the pipeliner appends iter_args oldest-to-newest.
+  // The newest slot corresponds to the write path.
+  for (int idx = numOperands - 1; idx >= 0; --idx) {
+    Value yieldVal = yieldOp.getOperand(idx);
+
+    // Check if the yield operand traces through expand_shape -> swizzle_hint.
+    auto expandOp = yieldVal.getDefiningOp<memref::ExpandShapeOp>();
+    if (!expandOp) {
+      continue;
+    }
+    auto hintOp =
+        expandOp.getSrc().getDefiningOp<IREE::Codegen::SwizzleHintOp>();
+    if (!hintOp) {
+      continue;
+    }
+
+    BlockArgument iterArg = forOp.getRegionIterArg(idx);
+    auto iterArgType = cast<MemRefType>(iterArg.getType());
+    SmallVector<ReassociationIndices> reassoc =
+        expandOp.getReassociationIndices();
+
+    FailureOr<MemRefType> flatType =
+        memref::CollapseShapeOp::computeCollapsedType(iterArgType, reassoc);
+    if (failed(flatType)) {
+      continue;
+    }
+
+    auto swizzleAttr = hintOp.getSwizzle();
+    Location loc = hintOp.getLoc();
+
+    LDBG() << "Cloning swizzle_hint onto iter_arg #" << idx << ": " << iterArg;
+
+    // Insert collapse_shape -> swizzle_hint -> expand_shape.
+    auto insertSwizzleHint = [&](Value value) {
+      auto collapse = memref::CollapseShapeOp::create(builder, loc, *flatType,
+                                                      value, reassoc);
+      auto hint = IREE::Codegen::SwizzleHintOp::create(
+          builder, loc, collapse.getResult(), swizzleAttr);
+      auto expand = memref::ExpandShapeOp::create(builder, loc, iterArgType,
+                                                  hint.getResult(), reassoc);
+      value.replaceAllUsesExcept(expand.getResult(), collapse.getOperation());
+    };
+
+    // Clone for reads inside the loop body.
+    builder.setInsertionPointToStart(body);
+    insertSwizzleHint(iterArg);
+
+    // Clone for reads in the epilogue.
+    builder.setInsertionPointAfter(forOp);
+    insertSwizzleHint(forOp.getResult(idx));
+  }
 }
 
 /// Multi-buffer LDS allocations used by gather_to_lds operations.
@@ -1357,6 +1418,9 @@ FailureOr<scf::ForOp> prefetchSharedMemoryCopy(RewriterBase &rewriter,
 
   // Insert barriers using the appropriate strategy for each mode.
   insertPipelineBarriers(rewriter, newForOp, mode);
+
+  // If swizzle_hint was applied, fix it by cloning onto the read-side.
+  cloneSwizzleHint(newForOp);
 
   // For async copy mode, convert gather_to_lds to async and insert explicit
   // async markers (asyncmark + wait.asyncmark). This replaces the backend's
