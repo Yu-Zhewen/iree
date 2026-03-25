@@ -918,21 +918,28 @@ getMatmulOrIGEMMLoweringConfigAndWorkgroupSize(
   SmallVector<Attribute> promotionArray;
   auto defaultConfigAttr = IREE::GPU::DerivedThreadConfigAttr::get(context);
   Attribute useGlobalDma = IREE::GPU::UseGlobalLoadDMAAttr::get(context);
-  if (useDirectLoad && !scaled) {
-    // Apply XOR swizzle on top of DMA for bank conflict avoidance.
-    // The DMA lowering pass applies inverse source swizzle to produce
-    // the correct swizzled layout in LDS.
-    FailureOr<Attribute> lhsSwizzleAttr = getXorShuffleAttr(
-        context, useGlobalDma, target, kind, schedule->kTileSizes,
-        kMMAOperandLhs);
-    FailureOr<Attribute> rhsSwizzleAttr = getXorShuffleAttr(
-        context, useGlobalDma, target, kind, schedule->kTileSizes,
-        kMMAOperandRhs);
-    if (failed(lhsSwizzleAttr) || failed(rhsSwizzleAttr)) {
-      promotionArray = {useGlobalDma, useGlobalDma};
-    } else {
-      promotionArray = {*lhsSwizzleAttr, *rhsSwizzleAttr};
+  if (!scaled && useDirectLoad) {
+    Attribute lhsAttr = useGlobalDma;
+    Attribute rhsAttr = useGlobalDma;
+    // Apply XOR swizzle for bank conflict avoidance. Only swizzle operands
+    // whose reduction dim is innermost (contiguous reads).
+    if (!transposedLhs) {
+      FailureOr<Attribute> lhsSwizzleAttr =
+          getXorShuffleAttr(context, useGlobalDma, target, kind,
+                            schedule->kTileSizes, kMMAOperandLhs);
+      if (succeeded(lhsSwizzleAttr)) {
+        lhsAttr = *lhsSwizzleAttr;
+      }
     }
+    if (transposedRhs) {
+      FailureOr<Attribute> rhsSwizzleAttr =
+          getXorShuffleAttr(context, useGlobalDma, target, kind,
+                            schedule->kTileSizes, kMMAOperandRhs);
+      if (succeeded(rhsSwizzleAttr)) {
+        rhsAttr = *rhsSwizzleAttr;
+      }
+    }
+    promotionArray = {lhsAttr, rhsAttr};
   }
   SmallVector<int64_t> promotionList = {0, 1};
   if (scaled) {
