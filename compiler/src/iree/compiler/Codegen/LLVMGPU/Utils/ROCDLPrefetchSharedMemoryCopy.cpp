@@ -280,27 +280,36 @@ static LogicalResult cloneOpsInsideLoop(memref::AllocOp alloc,
 
 /// memref::multiBuffer propagates type changes through a set of known view-like
 /// ops (subview, expand_shape, etc.). SwizzleHintOp is not in that set, so fix
-/// up the result types of the hint and downstream ExpandShapeOp consumers.
-static void propagateTypeFromMultiBuffer(scf::ForOp forOp) {
-  forOp->walk([](IREE::Codegen::SwizzleHintOp hint) {
-    if (hint.getOperand().getType() != hint.getResult().getType()) {
-      hint.getResult().setType(hint.getOperand().getType());
+/// up the result type of a single hint and its downstream ExpandShapeOp chain.
+static void propagateTypeFromMultiBuffer(IREE::Codegen::SwizzleHintOp hint) {
+  if (hint.getOperand().getType() != hint.getResult().getType()) {
+    hint.getResult().setType(hint.getOperand().getType());
+  }
+
+  SmallVector<Value> worklist = {hint.getResult()};
+  while (!worklist.empty()) {
+    Value current = worklist.pop_back_val();
+    for (OpOperand &use : current.getUses()) {
+      auto expandOp = dyn_cast<memref::ExpandShapeOp>(use.getOwner());
+      if (!expandOp) {
+        continue;
+      }
+      auto srcType = cast<MemRefType>(expandOp.getSrc().getType());
+      MemRefType resultType = expandOp.getResultType();
+      if (srcType.getLayout() == resultType.getLayout()) {
+        continue;
+      }
+      FailureOr<MemRefType> newResultType =
+          memref::ExpandShapeOp::computeExpandedType(
+              srcType, resultType.getShape(),
+              expandOp.getReassociationIndices());
+      if (failed(newResultType)) {
+        continue;
+      }
+      expandOp.getResult().setType(*newResultType);
+      worklist.push_back(expandOp.getResult());
     }
-  });
-  forOp->walk([](memref::ExpandShapeOp expandOp) {
-    auto srcType = cast<MemRefType>(expandOp.getSrc().getType());
-    MemRefType resultType = expandOp.getResultType();
-    if (srcType.getLayout() == resultType.getLayout()) {
-      return;
-    }
-    FailureOr<MemRefType> newResultType =
-        memref::ExpandShapeOp::computeExpandedType(
-            srcType, resultType.getShape(), expandOp.getReassociationIndices());
-    if (failed(newResultType)) {
-      return;
-    }
-    expandOp.getResult().setType(*newResultType);
-  });
+  }
 }
 
 /// After pipelining, the write path retains swizzle_hint but the read path
@@ -408,7 +417,7 @@ static LogicalResult multiBufferLDSAllocations(scf::ForOp forOp,
   }
 
   // Fix up types for swizzle hints after multi-buffering.
-  propagateTypeFromMultiBuffer(forOp);
+  forOp->walk(propagateTypeFromMultiBuffer);
 
   return success();
 }
