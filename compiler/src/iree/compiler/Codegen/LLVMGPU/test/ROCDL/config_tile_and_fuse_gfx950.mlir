@@ -395,6 +395,38 @@ func.func @scaled_matmul_accumulate(
 
 // -----
 
+// BF16 matmul with direct-load DMA gets LHS XOR swizzle for bank conflict
+// avoidance. Only LHS is swizzled (reduction dim is innermost for A[M,K]).
+func.func @matmul_bf16(
+    %arg0: tensor<4096x4096xbf16>,
+    %arg1: tensor<4096x4096xbf16>,
+    %arg2: tensor<4096x4096xf32>) -> tensor<4096x4096xf32> {
+  %0 = linalg.matmul ins(%arg0, %arg1 : tensor<4096x4096xbf16>, tensor<4096x4096xbf16>)
+                      outs(%arg2 : tensor<4096x4096xf32>) -> tensor<4096x4096xf32>
+  return %0 : tensor<4096x4096xf32>
+}
+// CHECK-LABEL: func.func @matmul_bf16
+// CHECK:   lowering_config = #iree_gpu.lowering_config
+// CHECK-SAME: mma_kind = #iree_gpu.mma_layout<MFMA_F32_16x16x32_BF16>
+
+// CHECK-REMARKS: [Analysis] SharedMemoryUsage
+// CHECK-REMARKS-SAME: Category:deduceMMASchedule
+// CHECK-REMARKS-SAME: Remark=16384
+
+// CHECK-REMARKS-DIRECT-LOAD-2: [Analysis] SharedMemoryUsage
+// CHECK-REMARKS-DIRECT-LOAD-2-SAME: Category:deduceMMASchedule
+// CHECK-REMARKS-DIRECT-LOAD-2-SAME: Remark=32768
+
+// CHECK-REMARKS-DIRECT-LOAD-3: [Analysis] SharedMemoryUsage
+// CHECK-REMARKS-DIRECT-LOAD-3-SAME: Category:deduceMMASchedule
+// CHECK-REMARKS-DIRECT-LOAD-3-SAME: Remark=49152
+
+// CHECK-DIRECT-LOAD-LABEL: func.func @matmul_bf16
+// CHECK-DIRECT-LOAD:       linalg.matmul {lowering_config = #iree_gpu.lowering_config
+// CHECK-DIRECT-LOAD-SAME:    promotion_types = [#iree_gpu.swizzle_operand<copy_config = #iree_gpu.use_global_load_dma, swizzle = #iree_codegen.xor_shuffle<128, 8>>, #iree_gpu.use_global_load_dma]
+
+// -----
+
 // Very large f16 matmul — compute-bound, so picks 32x32x16 (higher compute per
 // instruction, lower VGPR pressure than 16x16x32).
 func.func @matmul_f16_compute_bound(
