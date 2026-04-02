@@ -14,6 +14,7 @@ iree_lit_test_suite(
   NAME
     lit
   SRCS
+    "absorb_swizzle_hint_to_alloc.mlir"
     "add_fmfs.mlir"
     "affinemin_canonicalization.mlir"
     "batch_matmuls.mlir"
@@ -117,6 +118,7 @@ iree_lit_test_suite(
     "remove_single_iteration_loop.mlir"
     "repeated_matcher_use.mlir"
     "replace_slow_min_max_ops.mlir"
+    "reinsert_swizzle_hints.mlir"
     "resolve_swizzle_hints.mlir"
     "resolve_workgroup_count_hints.mlir"
     "specialize_exports.mlir"

@@ -90,7 +90,7 @@ hal.executable public @main {
 
 // CHECK-LABEL: func.func @scaled_matmul_dma
 //   CHECK-DAG:   memref.alloc() : memref<{{.*}}xf8E8M0FNU, #gpu.address_space<workgroup>>
-//   CHECK-DAG:   memref.alloc() : memref<{{.*}}xf4E2M1FN, #gpu.address_space<workgroup>>
+//   CHECK-DAG:   memref.alloc() {iree_codegen.swizzle = #iree_codegen.xor_shuffle<256, 32>} : memref<{{.*}}xf4E2M1FN, #gpu.address_space<workgroup>>
 //       CHECK:   scf.forall
 //       CHECK:     scf.for
 //       CHECK:       amdgpu.scaled_mfma 16x16x128
