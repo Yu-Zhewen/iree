@@ -280,6 +280,10 @@ static bool isCopyDMAConvertible(linalg::CopyOp copyOp) {
     return false;
   }
 
+  if (!sourceIsFromFatRawBuffer(copyOp.getInputs()[0])) {
+    return false;
+  }
+
   auto outputType = cast<RankedTensorType>(copyOp.getOutputs()[0].getType());
   int64_t rank = outputType.getRank();
   ArrayRef<int64_t> shape = outputType.getShape();
@@ -611,9 +615,6 @@ protected:
   SmallVector<OpFoldResult>
   computeThreadNumThreads(OpBuilder &builder,
                           linalg::CopyOp copyOp) const override {
-    if (!sourceIsFromFatRawBuffer(copyOp.getInputs()[0])) {
-      return {};
-    }
     auto outputType = cast<RankedTensorType>(copyOp.getOutputs()[0].getType());
     return computeThreadNumThreadsImpl(builder, copyOp, outputType);
   }
@@ -629,11 +630,6 @@ struct ConvertPadFusionCopyToCoalescedDMA : OpRewritePattern<linalg::CopyOp> {
     // Only match copies with use_global_load_dma config.
     auto config = getLoweringConfig<IREE::GPU::UseGlobalLoadDMAAttr>(copyOp);
     if (!config) {
-      return failure();
-    }
-
-    // Skip if source is not from fat_raw_buffer.
-    if (!sourceIsFromFatRawBuffer(copyOp.getInputs()[0])) {
       return failure();
     }
 
@@ -846,6 +842,50 @@ struct ConvertGatherToCoalescedDMA
   }
 };
 
+/// Set no_reduce_shared_memory_bank_conflicts in the function's pipeline
+/// options. Rebuilds the immutable attribute chain.
+static void setNoReduceBankConflicts(FunctionOpInterface funcOp, bool value) {
+  IREE::Codegen::TranslationInfoAttr translationInfo =
+      getTranslationInfo(funcOp);
+  if (!translationInfo) {
+    return;
+  }
+  DictionaryAttr config = translationInfo.getConfiguration();
+  if (!config) {
+    return;
+  }
+
+  MLIRContext *context = funcOp->getContext();
+  StringRef key = IREE::GPU::GPUPipelineOptionsAttr::getDictKeyName();
+  auto oldOptions =
+      dyn_cast_if_present<IREE::GPU::GPUPipelineOptionsAttr>(config.get(key));
+  if (!oldOptions) {
+    return;
+  }
+
+  auto newOptions = IREE::GPU::GPUPipelineOptionsAttr::get(
+      context, oldOptions.getPrefetchNumStages(),
+      Builder(context).getBoolAttr(value),
+      oldOptions.getUseIgemmConvolution(),
+      oldOptions.getReorderWorkgroupsStrategy());
+
+  SmallVector<NamedAttribute> entries(config.getValue());
+  for (NamedAttribute &entry : entries) {
+    if (entry.getName() == key) {
+      entry = NamedAttribute(entry.getName(), newOptions);
+      break;
+    }
+  }
+
+  (void)setTranslationInfo(
+      funcOp, IREE::Codegen::TranslationInfoAttr::get(
+                  context, translationInfo.getPassPipeline(),
+                  translationInfo.getCodegenSpec(),
+                  translationInfo.getWorkgroupSize(),
+                  translationInfo.getSubgroupSize(),
+                  DictionaryAttr::get(context, entries)));
+}
+
 struct GPUConvertToCoalescedDMAPass final
     : impl::GPUConvertToCoalescedDMAPassBase<GPUConvertToCoalescedDMAPass> {
   using GPUConvertToCoalescedDMAPassBase::GPUConvertToCoalescedDMAPassBase;
@@ -872,7 +912,10 @@ struct GPUConvertToCoalescedDMAPass final
 
     if (!dmaCopies.empty()) {
       bool allConvertible = llvm::all_of(dmaCopies, isCopyDMAConvertible);
-      if (!allConvertible) {
+      if (allConvertible) {
+        // When DMA is used, skip bank conflict padding.
+        setNoReduceBankConflicts(funcOp, /*value=*/true);
+      } else {
         LLVM_DEBUG({
           llvm::dbgs() << "DMA pre-check: not all DMA copies convertible, "
                        << "downgrading " << dmaCopies.size()
@@ -1115,7 +1158,7 @@ private:
     funcOp->walk([&](Operation *op) {
       if (auto copyOp = dyn_cast<linalg::CopyOp>(op)) {
         auto config = getLoweringConfig<IREE::GPU::UseGlobalLoadDMAAttr>(op);
-        if (!config || !sourceIsFromFatRawBuffer(copyOp.getInputs()[0])) {
+        if (!config) {
           return;
         }
         auto parentForall = op->getParentOfType<scf::ForallOp>();
