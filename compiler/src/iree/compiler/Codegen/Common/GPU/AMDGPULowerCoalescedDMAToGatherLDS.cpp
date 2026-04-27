@@ -96,11 +96,14 @@ struct TransferSegment {
 
 /// Computes transfer segments for a given number of elements.
 /// Prioritizes larger DMA sizes to minimize the number of transfers.
+/// |maxContiguousElements| caps the per-lane element count to avoid reading
+/// past contiguous stride boundaries in source or destination memrefs.
 /// Returns failure if the elements cannot be fully covered by the available
 /// DMA sizes.
 static FailureOr<SmallVector<TransferSegment>>
 computeTransferSegments(int64_t totalElements, int64_t elementBits,
-                        int64_t subgroupSize, ArrayRef<int64_t> dmaSizes) {
+                        int64_t subgroupSize, ArrayRef<int64_t> dmaSizes,
+                        int64_t maxContiguousElements) {
   // Sort DMA sizes in descending order to prioritize larger transfers.
   SmallVector<int64_t> sortedDmaSizes(dmaSizes);
   llvm::sort(sortedDmaSizes, std::greater<>());
@@ -115,6 +118,11 @@ computeTransferSegments(int64_t totalElements, int64_t elementBits,
       continue;
     }
     int64_t elementsPerLane = dmaSize / elementBits;
+
+    // Skip DMA sizes that would read/write past contiguous boundaries.
+    if (elementsPerLane > maxContiguousElements) {
+      continue;
+    }
 
     // Calculate total elements per transfer (all lanes combined).
     int64_t elementsPerTransfer = subgroupSize * elementsPerLane;
@@ -195,6 +203,26 @@ findSwizzleIncompatibleSegment(ArrayRef<TransferSegment> segments,
     }
   }
   return std::nullopt;
+}
+
+/// Returns the number of contiguous trailing dimensions and the product of
+/// their sizes (the "linear size") for a given memref type.
+/// At least 1 trailing dimension is always included.
+/// Returns {numContiguousDims, linearSize}. Stops accumulating if a dynamic
+/// dimension is encountered.
+static std::pair<int64_t, int64_t>
+getContiguousTrailingLinearSize(MemRefType type) {
+  int64_t rank = type.getRank();
+  int64_t numContiguous = type.getNumContiguousTrailingDims();
+  numContiguous = std::max<int64_t>(numContiguous, 1);
+  ArrayRef<int64_t> shape = type.getShape();
+  int64_t linearSize = 1;
+  for (int64_t i = rank - numContiguous; i < rank; ++i) {
+    if (ShapedType::isDynamic(shape[i]))
+      break;
+    linearSize *= shape[i];
+  }
+  return {numContiguous, linearSize};
 }
 
 /// Generates source and destination indices for a GatherToLDS operation.
@@ -301,21 +329,20 @@ struct LowerCoalescedGatherDMAPattern final
     size_t numIndexDims = indices.size();
     LDBG() << "Number of index dimensions: " << numIndexDims;
 
-    // Compute how many trailing dimensions to linearize.
-    // We can linearize dimensions that are contiguous in the destination
-    // memref. Gather indices don't affect this - they determine how we compute
-    // source indices, but the destination layout determines what we can
-    // linearize.
-    //
-    // Example: For dest <2x4x128> fully contiguous:
-    //   - numLinearDims = 3 -> linearize all dims (1024 elements)
-    // Example: For dest <2x4x128> with only dims 1-2 contiguous:
-    //   - numLinearDims = 2 -> linearize dims 1-2 (512 elements)
+    // Compute contiguous trailing dimensions for both source and destination.
+    auto [destNumLinear, destLinearSize] =
+        getContiguousTrailingLinearSize(destType);
+    auto [srcNumLinear, srcLinearSize] =
+        getContiguousTrailingLinearSize(sourceType);
+    LDBG() << "  Dest contiguous dims: " << destNumLinear
+           << ", linear size: " << destLinearSize;
+    LDBG() << "  Source contiguous dims: " << srcNumLinear
+           << ", linear size: " << srcLinearSize;
+
+    // Use the destination's contiguous dims for the iteration/linearization
+    // strategy (determines how we tile outer vs inner dims).
     int64_t destRank = destShape.size();
-    int64_t numLinearDims = destType.getNumContiguousTrailingDims();
-    // Always linearize at least the innermost dimension.
-    numLinearDims = std::max<int64_t>(numLinearDims, 1);
-    LDBG() << "  Number of linear dims: " << numLinearDims;
+    int64_t numLinearDims = destNumLinear;
 
     // Verify all linearized dimensions are static.
     for (int64_t i = destRank - numLinearDims; i < destRank; ++i) {
@@ -325,18 +352,22 @@ struct LowerCoalescedGatherDMAPattern final
       }
     }
 
-    // Compute total elements in the linearized portion (last numLinearDims
-    // dims).
-    int64_t linearSize = 1;
-    for (int64_t i = destRank - numLinearDims; i < destRank; ++i) {
-      linearSize *= destShape[i];
-    }
-    LDBG() << "  Linear size for segmentation: " << linearSize;
+    int64_t linearSize = destLinearSize;
+
+    // The per-lane transfer width must not exceed the contiguous trailing
+    // size of either source or destination. Otherwise gather_to_lds would
+    // read/write past stride boundaries into unrelated memory.
+    //
+    // Example: source memref<256x4xf8E8M0FNU, strided<[256, 1]>> has only
+    // 4 contiguous bytes per row. Using 128-bit (16-byte) DMA would read
+    // 4 correct bytes + 12 bytes from adjacent rows in the original tensor.
+    int64_t maxContiguousElements = std::min(srcLinearSize, destLinearSize);
+    LDBG() << "  Max contiguous elements/lane: " << maxContiguousElements;
 
     // Compute transfer segments using the helper function.
     FailureOr<SmallVector<TransferSegment>> segmentsOrFailure =
         computeTransferSegments(linearSize, elementBits, *subgroupSize,
-                                targetDmaSizes);
+                                targetDmaSizes, maxContiguousElements);
     if (failed(segmentsOrFailure)) {
       return rewriter.notifyMatchFailure(
           dmaOp, "cannot cover elements with any combination "
