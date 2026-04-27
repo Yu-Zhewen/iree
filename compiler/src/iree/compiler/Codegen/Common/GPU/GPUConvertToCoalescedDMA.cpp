@@ -34,6 +34,9 @@
 
 namespace mlir::iree_compiler {
 
+static constexpr llvm::StringLiteral kRedundantOnDistribute =
+    "iree_gpu.redundant_on_distribute";
+
 #define GEN_PASS_DEF_GPUCONVERTTOCOALESCEDDMAPASS
 #include "iree/compiler/Codegen/Common/GPU/Passes.h.inc"
 
@@ -317,7 +320,14 @@ static bool hasDWORDAlignedRows(tensor::PadOp pad, FunctionOpInterface funcOp) {
   if (rowBytes % 4 == 0) {
     return true;
   }
-  // Single-segment exemption.
+  // Single-segment exemption: safe only when the innermost dimension has no
+  // padding. When the inner dim is padded, output row width != source row
+  // width, so linearized DMA reads wrong source elements for padded positions
+  // instead of returning zeros.
+  SmallVector<OpFoldResult> highPad = pad.getMixedHighPad();
+  if (highPad.empty() || !isConstantIntValue(highPad.back(), 0)) {
+    return false;
+  }
   auto minAligned = getMinDMAAlignedElements(funcOp, elemType);
   if (!minAligned.has_value() || !sourceType.hasStaticShape()) {
     return false;
@@ -1223,10 +1233,9 @@ private:
                             llvm::none_of(shape, ShapedType::isDynamic);
       }
       if (outputTracesEmpty) {
-        int64_t totalWarps = 1;
-        for (int64_t n : numWarps) {
-          totalWarps *= std::max<int64_t>(n, 1);
-        }
+        auto positiveWarps =
+            llvm::make_filter_range(numWarps, [](int64_t n) { return n > 0; });
+        int64_t totalWarps = llvm::product_of(positiveWarps);
         int64_t maxSegments = availableElements / *minAligned;
         if (maxSegments < totalWarps) {
           // Collapse onto a single dim; computeSubgroupTileSizes only uses
@@ -1280,8 +1289,7 @@ private:
     if (cappedWarps && succeeded(tilingResult)) {
       for (LoopLikeOpInterface loop : tilingResult->loops) {
         if (auto forall = dyn_cast<scf::ForallOp>(loop.getOperation())) {
-          forall->setAttr("iree_gpu.redundant_on_distribute",
-                          UnitAttr::get(context));
+          forall->setAttr(kRedundantOnDistribute, UnitAttr::get(context));
           break;
         }
       }
