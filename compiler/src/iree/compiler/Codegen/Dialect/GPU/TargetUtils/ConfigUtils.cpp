@@ -971,7 +971,19 @@ getMatmulOrIGEMMLoweringConfigAndWorkgroupSize(
       }
       Attribute scaleConfig =
           scaleAligned ? useGlobalDma : (Attribute)defaultConfigAttr;
-      promotionArray = {useGlobalDma, useGlobalDma, scaleConfig, scaleConfig};
+      Attribute lhsDmaAttr = useGlobalDma;
+      Attribute rhsDmaAttr = useGlobalDma;
+      FailureOr<Attribute> lhsSwizzleAttr = getXorShuffleAttr(
+          context, lhsDmaAttr, target, kind, schedule->kTileSizes,
+          kMMAOperandLhs);
+      if (succeeded(lhsSwizzleAttr))
+        lhsDmaAttr = *lhsSwizzleAttr;
+      FailureOr<Attribute> rhsSwizzleAttr = getXorShuffleAttr(
+          context, rhsDmaAttr, target, kind, schedule->kTileSizes,
+          kMMAOperandRhs);
+      if (succeeded(rhsSwizzleAttr))
+        rhsDmaAttr = *rhsSwizzleAttr;
+      promotionArray = {lhsDmaAttr, rhsDmaAttr, scaleConfig, scaleConfig};
     } else {
       // TODO(#23329): Do not swizzle shapes that have no bank conflicts.
       FailureOr<Attribute> lhsSwizzleAttr =
