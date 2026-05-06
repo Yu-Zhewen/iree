@@ -401,6 +401,47 @@ func.func @matmul_f16_compute_bound(
 // CHECK-REMARKS-DIRECT-LOAD-3: [Analysis] SharedMemoryUsage
 // CHECK-REMARKS-DIRECT-LOAD-3-SAME: Category:deduceMMASchedule
 // CHECK-REMARKS-DIRECT-LOAD-3-SAME: Remark=98304
+// DMA rejected at 3 stages (98304 > 81920 = 160KB/2), non-DMA retry:
+// CHECK-REMARKS-DIRECT-LOAD-3: [Analysis] SharedMemoryUsage
+// CHECK-REMARKS-DIRECT-LOAD-3-SAME: Category:deduceMMASchedule
+// CHECK-REMARKS-DIRECT-LOAD-3-SAME: Remark=32768
+
+// -----
+
+// BF16 MediumGemm that triggers DMA occupancy rejection (shouldRejectDMAForOccupancy).
+// DMA multi-buffering (2 stages) doubles operand LDS to 96KB -> 1 WG/CU on
+// CDNA4 (160KB LDS). Without DMA, LDS is 48KB -> 3 WG/CU. DMA is rejected to
+// preserve occupancy.
+func.func @matmul_bf16_medium_gemm_dma_rejected(
+    %arg0: tensor<4096x512xbf16>,
+    %arg1: tensor<512x512xbf16>,
+    %arg2: tensor<4096x512xf32>) -> tensor<4096x512xf32> {
+  %0 = linalg.matmul ins(%arg0, %arg1 : tensor<4096x512xbf16>, tensor<512x512xbf16>)
+                      outs(%arg2 : tensor<4096x512xf32>) -> tensor<4096x512xf32>
+  return %0 : tensor<4096x512xf32>
+}
+
+// DMA rejected: no use_global_load_dma in the lowering config.
+// CHECK-DIRECT-LOAD-LABEL: func.func @matmul_bf16_medium_gemm_dma_rejected
+// CHECK-DIRECT-LOAD:       linalg.matmul {lowering_config = #iree_gpu.lowering_config
+// CHECK-DIRECT-LOAD-NOT:     use_global_load_dma
+// CHECK-DIRECT-LOAD-SAME:    workgroup = [64, 128, 0]
+
+// DMA attempt (98304 = 48KB * 2 stages), then non-DMA retry (49152 = 48KB).
+// CHECK-REMARKS-DIRECT-LOAD-2: [Analysis] SharedMemoryUsage
+// CHECK-REMARKS-DIRECT-LOAD-2-SAME: Category:deduceMMASchedule
+// CHECK-REMARKS-DIRECT-LOAD-2-SAME: Remark=98304
+// CHECK-REMARKS-DIRECT-LOAD-2: [Analysis] SharedMemoryUsage
+// CHECK-REMARKS-DIRECT-LOAD-2-SAME: Category:deduceMMASchedule
+// CHECK-REMARKS-DIRECT-LOAD-2-SAME: Remark=49152
+
+// DMA attempt (147456 = 48KB * 3 stages), then non-DMA retry (49152 = 48KB).
+// CHECK-REMARKS-DIRECT-LOAD-3: [Analysis] SharedMemoryUsage
+// CHECK-REMARKS-DIRECT-LOAD-3-SAME: Category:deduceMMASchedule
+// CHECK-REMARKS-DIRECT-LOAD-3-SAME: Remark=147456
+// CHECK-REMARKS-DIRECT-LOAD-3: [Analysis] SharedMemoryUsage
+// CHECK-REMARKS-DIRECT-LOAD-3-SAME: Category:deduceMMASchedule
+// CHECK-REMARKS-DIRECT-LOAD-3-SAME: Remark=49152
 
 // -----
 

@@ -557,6 +557,42 @@ getSplitReductionTripCount(mlir::FunctionOpInterface entryPoint) {
   return splitReductionTripCnt;
 }
 
+/// Returns true if DMA should be rejected due to LDS-limited occupancy.
+///
+/// DMA multi-buffering inflates LDS usage (by prefetchNumStages), which can
+/// reduce the number of concurrent workgroups per CU. When DMA would drop
+/// occupancy below `kMinWorkgroupsPerCU` but non-DMA would meet it, we reject
+/// DMA to preserve latency hiding.
+static bool shouldRejectDMAForOccupancy(
+    const GPUMMASchedule &schedule, const GPUMatmulShapeType &problem,
+    int64_t maxSharedMemoryBytes, int64_t prefetchNumStages,
+    bool doCPromotion) {
+  constexpr int64_t kMinWorkgroupsPerCU = 2;
+
+  int64_t lhsBitwidth = problem.aType.getIntOrFloatBitWidth();
+  int64_t rhsBitwidth = problem.bType.getIntOrFloatBitWidth();
+  int64_t resultBitwidth = problem.cType.getIntOrFloatBitWidth();
+  int64_t lhsScaleBitwidth =
+      problem.aScaleType ? problem.aScaleType.getIntOrFloatBitWidth() : 0;
+  int64_t rhsScaleBitwidth =
+      problem.bScaleType ? problem.bScaleType.getIntOrFloatBitWidth() : 0;
+  int64_t totalBatchTile = schedule.getTotalWorkgroupBatchSize();
+
+  int64_t dmaLdsBytes = calculateTotalSharedMemoryUsedInBytes(
+      schedule, lhsBitwidth, rhsBitwidth, lhsScaleBitwidth, rhsScaleBitwidth,
+      resultBitwidth, problem.numHorizontallyFusedOps, /*useDirectLoad=*/true,
+      prefetchNumStages, doCPromotion, totalBatchTile);
+  int64_t nonDmaLdsBytes = calculateTotalSharedMemoryUsedInBytes(
+      schedule, lhsBitwidth, rhsBitwidth, lhsScaleBitwidth, rhsScaleBitwidth,
+      resultBitwidth, problem.numHorizontallyFusedOps, /*useDirectLoad=*/false,
+      prefetchNumStages, doCPromotion, totalBatchTile);
+
+  int64_t dmaMaxWorkgroupsPerCU = maxSharedMemoryBytes / dmaLdsBytes;
+  int64_t nonDmaMaxWorkgroupsPerCU = maxSharedMemoryBytes / nonDmaLdsBytes;
+  return dmaMaxWorkgroupsPerCU < kMinWorkgroupsPerCU &&
+         nonDmaMaxWorkgroupsPerCU >= kMinWorkgroupsPerCU;
+}
+
 /// Create a lowering config for matmul or IGEMM convolution based on iteration
 /// bounds and indexing maps for a given target. This function computes
 /// contraction dimensions and deduces an MMA intrinsic schedule to choose tile
@@ -778,6 +814,21 @@ getMatmulOrIGEMMLoweringConfigAndWorkgroupSize(
   if (!schedule) {
     LDBG() << "Failed to deduce TileAndFuse MMA schedule";
     return failure();
+  }
+
+  if (useDirectLoad &&
+      shouldRejectDMAForOccupancy(
+          *schedule, problem,
+          target.getWgp().getMaxWorkgroupMemoryBytes(), prefetchNumStages,
+          hasExistingAccumulator)) {
+    LDBG() << "Rejecting DMA: multi-buffered LDS limits occupancy below 2 "
+              "WGs/CU; non-DMA LDS allows >= 2 WGs/CU";
+    useDirectLoad = false;
+    // Re-deduce the schedule without DMA.
+    schedule = getMmaScheduleFromProblemAndTarget(
+        target, problem, loc, transposedLhs, transposedRhs, isGemm, scaled,
+        useDirectLoad, prefetchNumStages, mustBeAligned,
+        hasExistingAccumulator, splitReductionTripCnt);
   }
 
   const int64_t targetSubgroupSize = target.getPreferredSubgroupSize();

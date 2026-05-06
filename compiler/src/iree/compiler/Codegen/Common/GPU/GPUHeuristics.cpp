@@ -70,11 +70,10 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os,
   }
 }
 
-static int64_t calculateOperandsSharedMemoryUsedInBytes(
+int64_t calculateOperandsSharedMemoryUsedInBytes(
     const GPUMMASchedule &schedule, int64_t lhsBitwidth, int64_t rhsBitwidth,
-    int64_t lhsScaleBitwidth = 0, int64_t rhsScaleBitwidth = 0,
-    int64_t numRhs = 1, bool useDirectLoad = false,
-    int64_t prefetchNumStages = 0) {
+    int64_t lhsScaleBitwidth, int64_t rhsScaleBitwidth, int64_t numRhs,
+    bool useDirectLoad, int64_t prefetchNumStages) {
   int64_t tileM = schedule.getTotalMSize() * schedule.getTotalMTileSize() *
                   schedule.getTotalMSubgroupCount();
   int64_t tileN = schedule.getTotalNSize() * schedule.getTotalNTileSize() *
@@ -108,12 +107,28 @@ static int64_t calculateOperandsSharedMemoryUsedInBytes(
 static int64_t
 calculateResultSharedMemoryUsedInBytes(const GPUMMASchedule &schedule,
                                        int64_t resultBitwidth,
-                                       int64_t numRes = 1) {
+                                       int64_t numRes) {
   int64_t tileM = schedule.getTotalMSize() * schedule.getTotalMTileSize() *
                   schedule.getTotalMSubgroupCount();
   int64_t tileN = schedule.getTotalNSize() * schedule.getTotalNTileSize() *
                   schedule.getTotalNSubgroupCount();
   return (numRes * tileM * tileN * resultBitwidth) / 8;
+}
+
+int64_t calculateTotalSharedMemoryUsedInBytes(
+    const GPUMMASchedule &schedule, int64_t lhsBitwidth, int64_t rhsBitwidth,
+    int64_t lhsScaleBitwidth, int64_t rhsScaleBitwidth, int64_t resultBitwidth,
+    int64_t numOps, bool useDirectLoad, int64_t prefetchNumStages,
+    bool doCPromotion, int64_t totalBatchTile) {
+  int64_t sharedMemoryUsed = calculateOperandsSharedMemoryUsedInBytes(
+      schedule, lhsBitwidth, rhsBitwidth, lhsScaleBitwidth, rhsScaleBitwidth,
+      numOps, useDirectLoad, prefetchNumStages);
+  if (doCPromotion) {
+    sharedMemoryUsed += calculateResultSharedMemoryUsedInBytes(
+        schedule, resultBitwidth, numOps);
+  }
+  sharedMemoryUsed *= totalBatchTile;
+  return sharedMemoryUsed;
 }
 
 /// Check that a GPUMMASchedule fits alignment restrictions. To be aligned,
@@ -1005,23 +1020,10 @@ FailureOr<GPUMMASchedule> deduceMMASchedule(
       bool isAligned =
           isValidMMASchedule(problem, schedule, mustBeAligned, subgroupSize,
                              transposedLhs, transposedRhs);
-      int64_t sharedMemoryUsed = calculateOperandsSharedMemoryUsedInBytes(
+      int64_t sharedMemoryUsed = calculateTotalSharedMemoryUsedInBytes(
           schedule, lhsBitwidth, rhsBitwidth, lhsScaleBitwidth,
-          rhsScaleBitwidth, problem.numHorizontallyFusedOps, useDirectLoad,
-          prefetchNumStages);
-      // Add accumulator/result memory when it uses shared memory (LDS):
-      // - Result needs padding in shared memory, OR
-      // - matmul_accumulate loads accumulator from global memory via shared mem
-      // For zero-initialized GEMMs without C promotion, the accumulator stays
-      // in registers and doesn't need shared memory.
-      if (doCPromotion) {
-        sharedMemoryUsed += calculateResultSharedMemoryUsedInBytes(
-            schedule, resultBitwidth, problem.numHorizontallyFusedOps);
-      }
-
-      // Batch tiling multiplies the promoted operand sizes: each batch slice
-      // uses separate shared memory, so total usage scales linearly.
-      sharedMemoryUsed *= totalBatchTile;
+          rhsScaleBitwidth, resultBitwidth, problem.numHorizontallyFusedOps,
+          useDirectLoad, prefetchNumStages, doCPromotion, totalBatchTile);
 
       LDBG() << "Available Shared Memory: " << sharedMemLimitInBytes << " bytes"
              << "Predicted Shared Memory Used by Schedule: " << sharedMemoryUsed

@@ -189,6 +189,24 @@ struct GPUMMASchedule {
   }
 };
 
+/// Returns the shared memory (LDS) used by operands for a given MMA schedule,
+/// in bytes. When |useDirectLoad| is true with |prefetchNumStages| > 0, the
+/// usage is multiplied by |prefetchNumStages| to account for multi-buffering.
+int64_t calculateOperandsSharedMemoryUsedInBytes(
+    const GPUMMASchedule &schedule, int64_t lhsBitwidth, int64_t rhsBitwidth,
+    int64_t lhsScaleBitwidth = 0, int64_t rhsScaleBitwidth = 0,
+    int64_t numRhs = 1, bool useDirectLoad = false,
+    int64_t prefetchNumStages = 0);
+
+/// Returns the total shared memory (LDS) used by a schedule, including operand
+/// memory, optional accumulator/result memory (when |doCPromotion| is true),
+/// and batch tiling (scaled by |totalBatchTile|).
+int64_t calculateTotalSharedMemoryUsedInBytes(
+    const GPUMMASchedule &schedule, int64_t lhsBitwidth, int64_t rhsBitwidth,
+    int64_t lhsScaleBitwidth, int64_t rhsScaleBitwidth, int64_t resultBitwidth,
+    int64_t numOps, bool useDirectLoad, int64_t prefetchNumStages,
+    bool doCPromotion, int64_t totalBatchTile);
+
 /// Returns a schedule for using one of the given MMA |intrinsics| to target the
 /// input |problem|. Returns std::nullopt if we cannot find such a schedule.
 /// When |target| is provided, architecture-specific seed adjustments (e.g.,
