@@ -133,12 +133,11 @@ struct ConvertGatherToLDS final : OpConversionPattern<amdgpu::GatherToLDSOp> {
 
 private:
   // Checks whether linearizeAndPack can succeed without modifying IR.
+  // Dynamic offsets are permitted because the adapted (type-converted) memref
+  // already carries the packed offset; we only linearize the indices here.
   static bool canLinearizeAndPack(ValueRange indices, MemRefType origType,
                                   int64_t origBits, int64_t newBits) {
     auto [strides, offset] = origType.getStridesAndOffset();
-    if (ShapedType::isDynamic(offset)) {
-      return false;
-    }
     for (int64_t stride : strides) {
       if (ShapedType::isDynamic(stride)) {
         return false;
@@ -155,9 +154,9 @@ private:
   }
 
   // Linearizes multi-dimensional indices into a 1D index for the packed
-  // byte-addressable memref. The caller must ensure canLinearizeAndPack()
-  // returns true before calling this.
-  //   linearIdx = offset + sum(idx[i] * stride[i])
+  // byte-addressable memref. The offset is NOT included because the adapted
+  // (type-converted) memref already carries the packed offset.
+  //   linearIdx = sum(idx[i] * stride[i])
   //   packedIdx = linearIdx / (newBits / origBits)
   static Value linearizeAndPack(ConversionPatternRewriter &rewriter,
                                 Location loc, ValueRange indices,
@@ -165,10 +164,9 @@ private:
                                 int64_t newBits) {
     auto [strides, offset] = origType.getStridesAndOffset();
 
-    // Linearize: offset + sum(idx[i] * stride[i]).
     auto overflowFlags =
         arith::IntegerOverflowFlags::nsw | arith::IntegerOverflowFlags::nuw;
-    Value linearIdx = arith::ConstantIndexOp::create(rewriter, loc, offset);
+    Value linearIdx = arith::ConstantIndexOp::create(rewriter, loc, 0);
     for (auto [idx, stride] : llvm::zip(indices, strides)) {
       Value strideVal = arith::ConstantIndexOp::create(rewriter, loc, stride);
       Value product =
