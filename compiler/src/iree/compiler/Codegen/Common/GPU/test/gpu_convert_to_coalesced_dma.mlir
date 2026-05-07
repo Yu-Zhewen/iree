@@ -919,68 +919,16 @@ func.func @copy_swizzle_hint_linearized(%source: tensor<128x16xf32>) -> tensor<1
 
 // -----
 
-// Test: sub-aligned DMA copy (128 elements < 256 min transfer).
-// With dma_sizes = [32, 128] and 8-bit elements:
-//   32-bit DMA: 4 elements/lane * 64 lanes = 256 elements min transfer
-// The 64x2 tensor (128 elements) is below the minimum, so per-warp padding
-// pads source and destination to 128x2 (256 elements) inside the warp forall.
-// After DMA, extract_slice recovers the original 64x2 shape.
+// Test: incremental warp-distribution halving in tileAtSubgroupLevel.
+// 32x4xf32 tile = 128 elements. Workgroup has 4 warps.  The greedy 4-warp
+// distribution would give 8x4 = 32 elements per warp, less than the
+// minimum DMA transfer (subgroup_size=64 * 1 elt/lane = 64 elements with
+// dma_sizes=[32,128] / 32-bit f32).  Halving picks numWarps=2, which gives
+// 16x4 = 64 elements per warp (== min) — DMA emit succeeds and the warp
+// forall is well-formed (preserving wave-uniformity by construction).
+// Issue #24139.
 
-#gpu_target_scale_pad = #iree_gpu.target<arch = "gfx950", features = "", wgp = <
-  compute = fp32, storage = b32, subgroup = shuffle,
-  max_load_instruction_bits = 128, subgroup_size_choices = [32],
-  max_workgroup_sizes = [1024, 1024, 1024], max_thread_count_per_workgroup = 1024,
-  max_workgroup_memory_bytes = 65536, max_workgroup_counts = [2147483647, 2147483647, 2147483647],
-  dma_sizes = [32, 128]
->>
-
-#exec_target_scale_pad = #hal.executable.target<"rocm", "rocm-hsaco-fb", {iree_codegen.target_info = #gpu_target_scale_pad}>
-#translation_scale_pad = #iree_codegen.translation_info<pipeline = #iree_gpu.pipeline<TileAndFuse> workgroup_size = [64, 1, 1] subgroup_size = 64, {gpu_pipeline_options = #iree_gpu.pipeline_options<prefetch_num_stages = 2, no_reduce_shared_memory_bank_conflicts = true, use_igemm_convolution = false>}>
-
-// CHECK-LABEL: func.func @copy_scale_padding
-// CHECK-SAME:    %[[SRC:[a-zA-Z0-9]+]]: tensor<64x2xf8E8M0FNU>
-func.func @copy_scale_padding(%source: tensor<64x2xf8E8M0FNU>) -> tensor<64x2xf8E8M0FNU>
-  attributes {hal.executable.target = #exec_target_scale_pad, translation_info = #translation_scale_pad} {
-  %empty = tensor.empty() : tensor<64x2xf8E8M0FNU>
-  %result = linalg.copy {lowering_config = #iree_gpu.use_global_load_dma}
-    ins(%source : tensor<64x2xf8E8M0FNU>)
-    outs(%empty : tensor<64x2xf8E8M0FNU>) -> tensor<64x2xf8E8M0FNU>
-
-  // Per-warp padding: destination is padded 64x2 -> 128x2 (256 elements) to
-  // meet the minimum DMA transfer size. The source pad (f8E8M0FNU zero =
-  // 2^(-127), all-zero bits) is fused into the DMA via in_bounds OOB clamping.
-  // CHECK: scf.forall
-  // CHECK:   %[[PADDED_DST:.+]] = tensor.empty() : tensor<128x2xf8E8M0FNU>
-
-  // Thread-level forall with DMA using pad fusion (in_bounds [false, true]).
-  // Source is the original 64x2, not the padded 128x2.
-  // CHECK:   %[[THREAD_FORALL:.+]] = scf.forall
-  // CHECK-SAME: shared_outs(%{{.+}} = %[[PADDED_DST]]) -> (tensor<128x2xf8E8M0FNU>)
-  // CHECK:     iree_gpu.coalesced_gather_dma
-  // CHECK-SAME:  in_bounds [false, true]
-  // CHECK-SAME:  tensor<64x2xf8E8M0FNU>, tensor<128x2xf8E8M0FNU>
-
-  // Extract_slice recovers the original 64x2 shape from the padded result.
-  // CHECK:   tensor.extract_slice %[[THREAD_FORALL]][0, 0] [64, 2] [1, 1]
-  // CHECK-SAME: tensor<128x2xf8E8M0FNU> to tensor<64x2xf8E8M0FNU>
-
-  return %result : tensor<64x2xf8E8M0FNU>
-}
-
-// -----
-
-// Test: workgroup-aligned but per-warp-sub-aligned scale copy caps the
-// participating warps instead of collapsing to a single identity-tiled warp.
-// Scale tile is 128x4 f8E8M0FNU = 512 elements. With dma_sizes=[32,128],
-// subgroup_size=64:
-//   min DMA granularity = 64 * (32/8) = 256 elements
-// Workgroup total: 512 % 256 == 0 → aligned.
-// Naive per-warp at 8 warps: 512 / 8 = 64 elements → 64 % 256 != 0 → sub-aligned.
-// Fix: cap usable warps at maxSegments = 512 / 256 = 2, so warp tile = 64x4
-// (= 256 elements) and padCopyForDMA does not fire. Two warps issue one DMA
-// each in parallel instead of one warp running two sequential DMAs.
-
-#gpu_target_scale_identity = #iree_gpu.target<arch = "gfx950", features = "", wgp = <
+#gpu_target_warp_halve = #iree_gpu.target<arch = "gfx950", features = "", wgp = <
   compute = fp32, storage = b32, subgroup = shuffle,
   max_load_instruction_bits = 128, subgroup_size_choices = [64],
   max_workgroup_sizes = [1024, 1024, 1024], max_thread_count_per_workgroup = 1024,
@@ -988,31 +936,66 @@ func.func @copy_scale_padding(%source: tensor<64x2xf8E8M0FNU>) -> tensor<64x2xf8
   dma_sizes = [32, 128]
 >>
 
-#exec_target_scale_identity = #hal.executable.target<"rocm", "rocm-hsaco-fb", {iree_codegen.target_info = #gpu_target_scale_identity}>
-// 8 warps: workgroup_size[0] / subgroup_size = 512 / 64 = 8
-#translation_scale_identity = #iree_codegen.translation_info<pipeline = #iree_gpu.pipeline<TileAndFuse> workgroup_size = [512, 1, 1] subgroup_size = 64, {gpu_pipeline_options = #iree_gpu.pipeline_options<prefetch_num_stages = 2, no_reduce_shared_memory_bank_conflicts = true, use_igemm_convolution = false>}>
+#exec_target_warp_halve = #hal.executable.target<"rocm", "rocm-hsaco-fb", {iree_codegen.target_info = #gpu_target_warp_halve}>
+#translation_warp_halve = #iree_codegen.translation_info<pipeline = #iree_gpu.pipeline<TileAndFuse> workgroup_size = [256, 1, 1] subgroup_size = 64, {gpu_pipeline_options = #iree_gpu.pipeline_options<prefetch_num_stages = 2, no_reduce_shared_memory_bank_conflicts = true, use_igemm_convolution = false>}>
 
-// CHECK-LABEL: func.func @copy_scale_capped_warps
-// CHECK-SAME:    %[[SRC:[a-zA-Z0-9]+]]: tensor<128x4xf8E8M0FNU>
-func.func @copy_scale_capped_warps(%source: tensor<128x4xf8E8M0FNU>) -> tensor<128x4xf8E8M0FNU>
-  attributes {hal.executable.target = #exec_target_scale_identity, translation_info = #translation_scale_identity} {
-  %empty = tensor.empty() : tensor<128x4xf8E8M0FNU>
-  %result = linalg.copy {lowering_config = #iree_gpu.use_global_load_dma}
-    ins(%source : tensor<128x4xf8E8M0FNU>)
-    outs(%empty : tensor<128x4xf8E8M0FNU>) -> tensor<128x4xf8E8M0FNU>
+// CHECK-LABEL: func.func @copy_warp_distribution_halving
+func.func @copy_warp_distribution_halving(%source: tensor<32x4xf32>, %off: index, %sz: index, %high: index) -> tensor<32x4xf32>
+  attributes {hal.executable.target = #exec_target_warp_halve, translation_info = #translation_warp_halve} {
+  %extracted = tensor.extract_slice %source[%off, 0] [%sz, 4] [1, 1]
+      : tensor<32x4xf32> to tensor<?x4xf32>
+  %cst = arith.constant 0.0 : f32
+  %padded = tensor.pad %extracted low[0, 0] high[%high, 0] {
+  ^bb0(%a: index, %b: index):
+    tensor.yield %cst : f32
+  } : tensor<?x4xf32> to tensor<32x4xf32>
+  %init = tensor.empty() : tensor<32x4xf32>
+  %r = linalg.copy {lowering_config = #iree_gpu.use_global_load_dma}
+    ins(%padded : tensor<32x4xf32>) outs(%init : tensor<32x4xf32>) -> tensor<32x4xf32>
 
-  // Outer warp forall: 2 iterations, step=(64,4). Each iteration = 1 warp,
-  // DMA-aligned per-warp tile. The redundant_on_distribute attribute tells
-  // downstream fusion + distribution to drop the warp guard so every
-  // subgroup redundantly issues the same DMA instead of running only the
-  // first warp.
-  // CHECK: scf.forall (%{{.+}}, %{{.+}}) = (0, 0) to (128, 4) step (64, 4)
-
-  // Inner lane forall: 64 lanes per warp, each handles 4 elements (256/64=4).
-  // CHECK:   scf.forall (%[[LANE:.+]]) in (64)
+  // 2-warp distribution (step=16 on dim 0, dim 1 kept whole).
+  // CHECK: scf.forall (%{{.+}}, %{{.+}}) = (0, 0) to (32, 4) step (16, 4)
+  // CHECK:   scf.forall (%{{.+}}) in (64)
   // CHECK:     iree_gpu.coalesced_gather_dma
-  // CHECK-SAME:  tensor<64x4xf8E8M0FNU>, tensor<64x4xf8E8M0FNU>
-  // CHECK: } {iree_gpu.redundant_on_distribute, mapping = [#gpu.warp<linear_dim_1>, #gpu.warp<linear_dim_0>]}
+  // CHECK: } {mapping = [#gpu.warp<linear_dim_1>, #gpu.warp<linear_dim_0>]}
+  // CHECK-NOT: linalg.copy
 
-  return %result : tensor<128x4xf8E8M0FNU>
+  return %r : tensor<32x4xf32>
+}
+
+// -----
+
+// Test: linearized-availability detection must not rely on
+// `availableElements != innermostDim`. With a 1D (or [1,...,N]) shape whose
+// output traces to tensor.empty(), linearization fires but the two values
+// are equal. The unmodified `numWarps` (4) on shape [128] yields a per-warp
+// tile of 32 elements (< min DMA transfer 64), so halving must still kick in
+// and pick numWarps=2 (per-warp tile = 64). Issue #24139.
+
+#gpu_target_warp_halve_1d = #iree_gpu.target<arch = "gfx950", features = "", wgp = <
+  compute = fp32, storage = b32, subgroup = shuffle,
+  max_load_instruction_bits = 128, subgroup_size_choices = [64],
+  max_workgroup_sizes = [1024, 1024, 1024], max_thread_count_per_workgroup = 1024,
+  max_workgroup_memory_bytes = 65536, max_workgroup_counts = [2147483647, 2147483647, 2147483647],
+  dma_sizes = [32, 128]
+>>
+
+#exec_target_warp_halve_1d = #hal.executable.target<"rocm", "rocm-hsaco-fb", {iree_codegen.target_info = #gpu_target_warp_halve_1d}>
+#translation_warp_halve_1d = #iree_codegen.translation_info<pipeline = #iree_gpu.pipeline<TileAndFuse> workgroup_size = [256, 1, 1] subgroup_size = 64, {gpu_pipeline_options = #iree_gpu.pipeline_options<prefetch_num_stages = 2, no_reduce_shared_memory_bank_conflicts = true, use_igemm_convolution = false>}>
+
+// CHECK-LABEL: func.func @copy_warp_distribution_halving_1d
+func.func @copy_warp_distribution_halving_1d(%source: tensor<128xf32>) -> tensor<128xf32>
+  attributes {hal.executable.target = #exec_target_warp_halve_1d, translation_info = #translation_warp_halve_1d} {
+  %init = tensor.empty() : tensor<128xf32>
+  %r = linalg.copy {lowering_config = #iree_gpu.use_global_load_dma}
+    ins(%source : tensor<128xf32>) outs(%init : tensor<128xf32>) -> tensor<128xf32>
+
+  // 2-warp distribution (step=64 on the only dim).
+  // CHECK: scf.forall (%{{.+}}) = (0) to (128) step (64)
+  // CHECK:   scf.forall (%{{.+}}) in (64)
+  // CHECK:     iree_gpu.coalesced_gather_dma
+  // CHECK: } {mapping = [#gpu.warp<linear_dim_0>]}
+  // CHECK-NOT: linalg.copy
+
+  return %r : tensor<128xf32>
 }
